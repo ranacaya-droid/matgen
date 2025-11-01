@@ -44,6 +44,8 @@ const appId = firebaseConfig.projectId;
 let app, auth, db;
 let currentUserId = null;
 let lessonCache = [];
+
+
             
             // Get references to new auth buttons
             // FIXED: These are now *inside* DOMContentLoaded
@@ -310,19 +312,16 @@ let lessonCache = [];
                     const lessonConfig = {
                         gameMode: window.beebotApp.getGameMode(),
                         customBeeImageUrl: window.beebotApp.getCustomBeeImage(),
-                        // Stringify nested lessonData array
+                        // --- FIXED: Stringify nested lessonData array ---
                         lessonData: JSON.stringify(window.beebotApp.getLessonData())
                     };
-                    
-                    // VITAL FIX: Stringify the entire config object to avoid "invalid nested entity" error
-                    const configString = JSON.stringify(lessonConfig);
 
                     const lessonsCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
                     
                     try {
                         const docRef = await addDoc(collection(db, lessonsCollectionPath), {
                             name: lessonName,
-                            config: configString, // <--- SAVING THE ENTIRE CONFIG AS A STRING
+                            config: lessonConfig,
                             createdAt: new Date().toISOString(),
                             isPublic: false, // --- PHASE 4: Default to private
                             sharedLessonId: null // --- PHASE 4: Default to null
@@ -365,9 +364,8 @@ let lessonCache = [];
                     
                     try {
                         // 3. Add a *copy* of the lesson config to the public collection
-                        // IMPORTANT: The config here is already a string because it was saved that way in saveLessonToFirestore
                         const docRef = await addDoc(collection(db, publicCollectionPath), {
-                            config: lesson.config, // Save the config string
+                            config: lesson.config, // Save the config object
                             teacherId: currentUserId, // Keep track of who made it
                             originalName: lesson.name,
                             sharedAt: new Date().toISOString(),
@@ -566,10 +564,9 @@ let lessonCache = [];
                         
                         // 2. Create a new private lesson
                         const privateCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
-                        // The config here is a string, which is exactly what we want to save.
                         const docRef = await addDoc(collection(db, privateCollectionPath), {
                             name: `(Clone) ${publicLesson.originalName || 'Untitled Lesson'}`,
-                            config: publicLesson.config, // Copy the config string
+                            config: publicLesson.config, // Copy the config object
                             createdAt: new Date().toISOString(),
                             clonedFrom: publicId,
                             isPublic: false, // Cloned lesson is private
@@ -592,12 +589,9 @@ let lessonCache = [];
                     if (!currentUserId) return;
                     
                     // Simple confirm dialog (replace with custom modal later)
-                    // We must avoid using native window.confirm in a sandbox environment
-                    // if (!confirm("Are you sure you want to delete this lesson? This cannot be undone.")) {
-                    //     return;
-                    // }
-                    
-                    // For now, assume confirmation logic is handled externally or skip.
+                    if (!confirm("Are you sure you want to delete this lesson? This cannot be undone.")) {
+                        return;
+                    }
                     
                     // --- PHASE 4: Also delete the shared lesson if it exists ---
                     const lesson = lessonCache.find(l => l.id === lessonId);
@@ -618,7 +612,7 @@ let lessonCache = [];
                         // The onSnapshot listener will automatically update the UI
                     } catch (e) {
                         console.error("Error deleting document: ", e);
-                        // alert(`Error deleting lesson: ${e.message}`); // Avoid alert
+                        alert(`Error deleting lesson: ${e.message}`);
                     }
                 }
 
@@ -633,7 +627,7 @@ let lessonCache = [];
                     } else {
                         // Fallback (shouldn't happen with onSnapshot)
                         console.error("Could not find lesson in cache. This is unexpected.");
-                        // alert("Error: Could not find lesson to load."); // Avoid alert
+                        alert("Error: Could not find lesson to load.");
                     }
                 }
                 
@@ -644,8 +638,7 @@ let lessonCache = [];
                     
                     const key = apiKeyInput.value.trim();
                     if (!key) {
-                        // alert("Please enter an API key."); // Avoid alert
-                        window.beebotApp.showToast("Please enter an API key.", 2000);
+                        alert("Please enter an API key.");
                         return;
                     }
                     
@@ -663,8 +656,7 @@ let lessonCache = [];
                         settingsModal.classList.add('hidden');
                     } catch (e) {
                         console.error("Error saving API key:", e);
-                        // alert(`Error saving key: ${e.message}`); // Avoid alert
-                        window.beebotApp.showToast("Error saving key.", 2000);
+                        alert(`Error saving key: ${e.message}`);
                     }
                 }
                 
@@ -714,8 +706,7 @@ let lessonCache = [];
                     if (lessonName) {
                         saveLessonToFirestore(lessonName);
                     } else {
-                        // alert("Please enter a name for your lesson."); // Avoid alert
-                        window.beebotApp.showToast("Please enter a name for your lesson.", 2000);
+                        alert("Please enter a name for your lesson.");
                     }
                 });
                 
@@ -795,7 +786,7 @@ let lessonCache = [];
                 // --- VIZ: New async function to build the visualizer ---
                 async function visualizeStudentWork(sharedLessonId, workString) {
                     try {
-                        // 1. Fetch the lesson config string
+                        // 1. Fetch the lesson config
                         const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${sharedLessonId}`;
                         const lessonDocRef = doc(db, lessonDocPath);
                         const lessonDoc = await getDoc(lessonDocRef);
@@ -804,11 +795,7 @@ let lessonCache = [];
                             throw new Error("Lesson not found. It may have been deleted.");
                         }
 
-                        // Parse the stored config string
-                        let lessonConfigString = lessonDoc.data().config;
-                        let lessonConfig = JSON.parse(lessonConfigString);
-
-                        // Parse the nested lessonData array
+                        let lessonConfig = lessonDoc.data().config;
                         if (typeof lessonConfig.lessonData === 'string') {
                             lessonConfig.lessonData = JSON.parse(lessonConfig.lessonData);
                         }
@@ -978,7 +965,7 @@ let lessonCache = [];
 
             } catch (e) {
                 console.error("Firebase initialization failed:", e);
-                // alert("Error: Could not connect to services. Please try again later."); // Avoid alert
+                alert("Error: Could not connect to services. Please try again later.");
                 // Hide all auth-related buttons if Firebase fails
                 document.querySelectorAll('.auth-required').forEach(el => el.classList.add('hidden'));
             }
@@ -1727,17 +1714,16 @@ let lessonCache = [];
 
                     if (lessonDoc.exists()) {
                         console.log("Found shared lesson, loading...");
-                        // The config here is the JSON string we stored in Firestore
-                        const lessonConfigString = lessonDoc.data().config; 
-                        loadStudentLesson(lessonConfigString); // This is the app's internal function
+                        const lessonConfig = lessonDoc.data().config;
+                        loadStudentLesson(lessonConfig); // This is the app's internal function
                     } else {
                         console.error("Shared lesson not found.");
-                        // alert("The lesson link is invalid or the lesson was deleted."); // Avoid alert
+                        alert("The lesson link is invalid or the lesson was deleted.");
                         homePage.classList.remove('hidden'); // Show homepage as fallback
                     }
                 } catch (err) {
                     console.error("Error loading shared lesson:", err);
-                    // alert("There was an error loading the lesson."); // Avoid alert
+                    alert("There was an error loading the lesson.");
                     homePage.classList.remove('hidden'); // Show homepage as fallback
                 }
             }
@@ -1819,34 +1805,22 @@ let lessonCache = [];
                 setTimeout(resizeCanvasAndPath, 50);
             }
 
-            // EDITED: loadStudentLesson now expects the config to be the JSON string
-            function loadStudentLesson(configString) {
-                // VITAL FIX: Parse the top-level config string from Firestore
-                let config;
-                try {
-                    config = JSON.parse(configString);
-                } catch (e) {
-                    console.error("Error parsing student lesson config string:", e);
-                    // alert("Error: Could not read this lesson's configuration."); // Avoid alert
-                    return;
+            // EDITED: Renamed from initializeGame to loadStudentLesson
+            function loadStudentLesson(config) {
+                // --- FIXED: Parse lessonData if it's a string ---
+                if (typeof config.lessonData === 'string') {
+                    try {
+                        config.lessonData = JSON.parse(config.lessonData);
+                    } catch (e) {
+                        console.error("Error parsing student lesson data:", e);
+                        alert("Error: Could not read this lesson's data.");
+                        return;
+                    }
                 }
                 
                 gameMode = config.gameMode;
                 isStudentMode = true; // Loaded games are always in student mode
-                
-                // Fix: Check and parse the nested lessonData string
-                if (typeof config.lessonData === 'string') {
-                    try {
-                        lessonData = JSON.parse(config.lessonData);
-                    } catch (e) {
-                        console.error("Error parsing student lesson data (inner parse failed):", e);
-                        // alert("Error: Could not read this lesson's data."); // Avoid alert
-                        return;
-                    }
-                } else {
-                    lessonData = config.lessonData;
-                }
-
+                lessonData = config.lessonData;
                 currentSlideIndex = 0;
 
                 // Initialize studentWork array with empty command lists
@@ -1882,35 +1856,23 @@ let lessonCache = [];
                 setTimeout(resizeCanvasAndPath, 50);
             }
             
-            // --- ADDED: loadSavedLesson now expects the config to be the JSON string
-            function loadSavedLesson(configString) {
-                // VITAL FIX: Parse the top-level config string from Firestore
-                let config;
-                try {
-                    config = JSON.parse(configString);
-                } catch (e) {
-                    console.error("Error parsing saved lesson config string:", e);
-                    // alert("Error: Could not read this lesson's configuration."); // Avoid alert
-                    return;
+            // --- ADDED: New function to load a saved lesson for a TEACHER ---
+            function loadSavedLesson(config) {
+                // --- FIXED: Parse lessonData if it's a string ---
+                if (typeof config.lessonData === 'string') {
+                    try {
+                        config.lessonData = JSON.parse(config.lessonData);
+                    } catch (e) {
+                        console.error("Error parsing saved lesson data:", e);
+                        alert("Error: Could not read this lesson's data.");
+                        return;
+                    }
                 }
                 
                 console.log("Loading saved lesson:", config);
                 gameMode = config.gameMode;
                 isStudentMode = false; // Teacher is loading this
-                
-                // Fix: Check and parse the nested lessonData string
-                if (typeof config.lessonData === 'string') {
-                    try {
-                        lessonData = JSON.parse(config.lessonData);
-                    } catch (e) {
-                        console.error("Error parsing saved lesson data (inner parse failed):", e);
-                        // alert("Error: Could not read this lesson's data."); // Avoid alert
-                        return;
-                    }
-                } else {
-                    lessonData = config.lessonData;
-                }
-
+                lessonData = config.lessonData;
                 currentSlideIndex = 0;
                 studentWork = []; // Teachers don't have "student work" in this context
 
@@ -2415,8 +2377,7 @@ let lessonCache = [];
             // --- ADDED: Function to generate PDF for physical mat ---
             async function generatePhysicalMatPDF() {
                 if (isStudentMode) {
-                    // alert("This feature is for teachers only."); // Avoid alert
-                    window.beebotApp.showToast("This feature is for teachers only.", 2000);
+                    alert("This feature is for teachers only.");
                     return;
                 }
                 
@@ -2525,8 +2486,7 @@ let lessonCache = [];
             async function generateAiImage() {
                 const prompt = aiPromptInput.value;
                 if (!prompt) {
-                    // alert("Please enter a prompt."); // Avoid alert
-                    window.beebotApp.showToast("Please enter a prompt.", 2000);
+                    alert("Please enter a prompt.");
                     return;
                 }
                 
@@ -2542,8 +2502,7 @@ let lessonCache = [];
                     const userApiKey = await getApiKey();
 
                     if (!userApiKey) {
-                        // alert("To generate AI images, please add your Google AI API key in the 'Settings' menu (top-right)."); // Avoid alert
-                        window.beebotApp.showToast("Add your Google AI API key in 'Settings'.", 3000);
+                        alert("To generate AI images, please add your Google AI API key in the 'Settings' menu (top-right).");
                         aiModal.classList.add('hidden'); // Close AI modal
                         aiModalLoader.classList.add('hidden');
                         aiModalGenerate.disabled = false;
@@ -2596,8 +2555,7 @@ let lessonCache = [];
                     }
                 } catch (error) {
                     console.error("AI Image Generation Error:", error);
-                    // alert(`Failed to generate image: ${error.message}. Check console for details.`); // Avoid alert
-                    window.beebotApp.showToast(`Failed to generate image: ${error.message}`, 5000);
+                    alert(`Failed to generate image: ${error.message}. Check console for details.`);
                 } finally {
                     aiModalLoader.classList.add('hidden');
                     aiModalGenerate.disabled = false;
@@ -2634,8 +2592,7 @@ let lessonCache = [];
                     studentNameModal.classList.add('hidden');
                     submitStudentWork(); // Now submit the work
                 } else {
-                    // alert("Please enter your name."); // Avoid alert
-                    window.beebotApp.showToast("Please enter your name.", 2000);
+                    alert("Please enter your name.");
                 }
             });
 
@@ -2674,7 +2631,7 @@ let lessonCache = [];
                     
                 } catch (e) {
                     console.error("Error submitting work:", e);
-                    // alert(`Error submitting work: ${e.message}`); // Avoid alert
+                    alert(`Error submitting work: ${e.message}`);
                     showToast("Error submitting work.", 3000);
                 }
             }
@@ -3215,5 +3172,6 @@ let lessonCache = [];
     </script>
 </body>
 </html>
+
 
 
