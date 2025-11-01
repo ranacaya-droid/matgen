@@ -21,7 +21,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
 
-           // --- FIREBASE CONFIG (ADDED) ---
+            // --- FIREBASE CONFIG (ADDED) ---
 // These are YOUR private keys from your new Firebase project
 const firebaseConfig = {
   apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
@@ -40,7 +40,7 @@ const appId = firebaseConfig.projectId;
 let app, auth, db;
 let currentUserId = null;
 let lessonCache = [];
-            
+
             // Get references to new auth buttons (Ensured inside DOMContentLoaded)
             const loginBtn = document.getElementById('login-btn');
             const logoutBtn = document.getElementById('logout-btn-home');
@@ -106,21 +106,28 @@ let lessonCache = [];
                 // --- FIREBASE AUTHENTICATION (The "Bouncer") ---
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        // User is logged in
+                        // User is logged in (Teacher or successfully signed-in Student)
                         console.log("User is logged in:", user.uid);
                         currentUserId = user.uid;
                         showLoggedInUI(user);
                         loadUserLessons(user.uid);
                     } else {
-                        // User is logged out. Sign in anonymously if possible.
+                        // User is logged out.
                         console.log("User is logged out.");
                         currentUserId = null;
                         showLoggedOutUI();
 
-                        // Try custom token sign-in first, fall back to anonymous
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                             signInWithCustomToken(auth, __initial_auth_token).catch(handleAuthError);
+                        // FIX: Ensure Anonymous sign-in for students to read shared lessons
+                        const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                        
+                        if (initialToken) {
+                             signInWithCustomToken(auth, initialToken).catch((error) => {
+                                 console.error("Custom Token Sign-In Failed, falling back to Anonymous:", error);
+                                 // Fallback if custom token fails (rare)
+                                 signInAnonymously(auth).catch(handleAuthError);
+                             });
                         } else {
+                             // Default to Anonymous Sign-In for all non-authenticated users (students)
                              signInAnonymously(auth).catch(handleAuthError);
                         }
                     }
@@ -426,9 +433,11 @@ let lessonCache = [];
                     viewWorkPrevSlide.disabled = (slideIndex === 0);
                     viewWorkNextSlide.disabled = (slideIndex === lessonConfig.lessonData.length - 1);
                     viewWorkModal.dataset.currentVizIndex = slideIndex; // Store current index on modal
-
+                    
                     // 3. Build the mini-grid UI
                     viewWorkGrid.innerHTML = ''; 
+                    // CRITICAL FIX: Re-add the canvas element inside the grid container
+                    viewWorkGrid.appendChild(viewWorkCanvas);
                     viewWorkGrid.style.gridTemplateRows = `repeat(${gridRows}, 1fr)`;
                     viewWorkGrid.style.gridTemplateColumns = `repeat(${gridCols}, 1fr)`;
 
@@ -453,18 +462,20 @@ let lessonCache = [];
                             viewWorkGrid.appendChild(cell);
                         }
                     }
-
+                    
+                    // --- Get canvas context and resize ---
+                    const rect = viewWorkGrid.getBoundingClientRect();
+                    const canvas = viewWorkCanvas;
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                    const ctx = canvas.getContext('2d');
+                    
                     // 4. Draw the path on the canvas (Simulation)
                     requestAnimationFrame(() => {
-                        const rect = viewWorkGrid.getBoundingClientRect();
-                        const canvas = viewWorkCanvas;
-                        canvas.width = rect.width;
-                        canvas.height = rect.height;
-                        const ctx = canvas.getContext('2d');
-
                         const cellWidth = canvas.width / gridCols;
                         const cellHeight = canvas.height / gridRows;
 
+                        ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear previous path
                         ctx.strokeStyle = '#FF0000'; // Student path is always red
                         ctx.lineWidth = 3;
                         ctx.lineCap = 'round';
@@ -1025,7 +1036,8 @@ let lessonCache = [];
             width: 100%;
             aspect-ratio: 1 / 1;
         }
-        #view-work-canvas {
+        /* CRITICAL FIX: The canvas inside the view grid must be positioned absolutely over the grid cells */
+        #view-work-grid > canvas { 
             position: absolute;
             top: 0;
             left: 0;
@@ -1371,6 +1383,7 @@ let lessonCache = [];
                     <p class="text-gray-600 mt-16">Loading visualization...</p>
                 </div>
                 <div id="view-work-grid" class="hidden">
+                    <!-- CRITICAL FIX: The canvas element now stays here to be used by JS -->
                     <canvas id="view-work-canvas"></canvas>
                 </div>
             </div>
@@ -2526,7 +2539,7 @@ let lessonCache = [];
                             if (pathSimState.dir === 2) backRow--;
                             if (pathSimState.dir === 3) backCol++;
 
-                            if (backRow >= 0 && backRow < slide.gridRows && backCol >= 0 && backCol < slide.gridCols) {
+                            if (backRow >= 0 && backCol < slide.gridRows && backCol >= 0 && backCol < slide.gridCols) {
                                 pathSimState.row = backRow;
                                 pathSimState.col = backCol;
                                 tempCtx.lineTo(pathSimState.col * cellW + cellW / 2, pathSimState.row * cellH + cellH / 2);
