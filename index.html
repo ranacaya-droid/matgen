@@ -1,0 +1,3219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Bee-Bot Mat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <!-- --- FIREBASE SDKs (ADDED) --- -->
+    <!-- We need these to connect to Firebase for Auth and Database -->
+    <script type="module">
+        // These are the new Firebase libraries we need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // FIXED: Removed setLogLevel from auth import
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // FIXED: Added setLogLevel to firestore import
+        // --- PHASE 3: Added updateDoc, where ---
+        // --- BYOK: Added merge ---
+        // --- FIXED: Corrected httpsS:// typo ---
+        import { getFirestore, doc, setDoc, addDoc, collection, query, getDocs, deleteDoc, onSnapshot, setLogLevel, getDoc, updateDoc, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- FIXED: Wrap all logic in DOMContentLoaded ---
+        // This ensures the HTML elements exist before we try to get them
+        document.addEventListener('DOMContentLoaded', () => {
+            
+          // --- FIREBASE CONFIG (ADDED) ---
+// These are YOUR private keys from your new Firebase project
+const firebaseConfig = {
+  apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
+  authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
+  projectId: "unboxing-ct--mat-generator",
+  storageBucket: "unboxing-ct--mat-generator.firebasestorage.app",
+  messagingSenderId: "169453856176",
+  appId: "1:169453856176:web:3fe35bf413fa89915ea275",
+  measurementId: "G-3F5PGB128B"
+};
+
+// This line MUST come AFTER the config object
+const appId = firebaseConfig.projectId;
+
+// This is our app's code, it comes AFTER your config
+let app, auth, db;
+let currentUserId = null;
+let lessonCache = [];
+            
+            // Get references to new auth buttons
+            // FIXED: These are now *inside* DOMContentLoaded
+            const loginBtn = document.getElementById('login-btn');
+            const logoutBtn = document.getElementById('logout-btn-home');
+            const logoutBtnGame = document.getElementById('logout-btn-game');
+            const myLessonsBtn = document.getElementById('my-lessons-btn');
+            const myLessonsModal = document.getElementById('my-lessons-modal');
+            const myLessonsList = document.getElementById('my-lessons-list');
+            const closeLessonsModalBtn = document.getElementById('close-lessons-modal');
+            const saveLessonBtn = document.getElementById('save-lesson-btn');
+            const saveLessonModal = document.getElementById('save-lesson-modal');
+            const saveLessonModalCancel = document.getElementById('save-lesson-modal-cancel');
+            const saveLessonModalSave = document.getElementById('save-lesson-modal-save');
+            const lessonNameInput = document.getElementById('lesson-name-input');
+            
+            // --- PHASE 2: Added Share Modal elements ---
+            const shareLinkModal = document.getElementById('share-link-modal');
+            const shareLinkInput = document.getElementById('share-link-input');
+            const copyLinkBtn = document.getElementById('copy-link-btn');
+            const closeShareModalBtn = document.getElementById('close-share-modal');
+            
+            // --- PHASE 3: Added Submissions Modal elements ---
+            const submissionsModal = document.getElementById('submissions-modal');
+            const closeSubmissionsModalBtn = document.getElementById('close-submissions-modal');
+            const submissionsList = document.getElementById('submissions-list');
+            const submissionsLessonName = document.getElementById('submissions-lesson-name');
+            const viewWorkModal = document.getElementById('view-work-modal');
+            const closeViewWorkModalBtn = document.getElementById('close-view-work-modal');
+            const viewWorkStudentName = document.getElementById('view-work-student-name');
+            const viewWorkContent = document.getElementById('view-work-content');
+            
+            // --- VIZ: Added new elements for the visualizer ---
+            const viewWorkGrid = document.getElementById('view-work-grid');
+            const viewWorkCanvas = document.getElementById('view-work-canvas');
+            const viewWorkLoader = document.getElementById('view-work-loader');
+            
+            // --- PHASE 4: Added Gallery Modal elements ---
+            const galleryBtn = document.getElementById('gallery-btn');
+            const galleryModal = document.getElementById('public-gallery-modal');
+            const closeGalleryModalBtn = document.getElementById('close-gallery-modal');
+            const galleryList = document.getElementById('public-gallery-list');
+            
+            // --- BYOK: Added Settings Modal elements ---
+            const settingsBtn = document.getElementById('settings-btn');
+            const settingsBtnGame = document.getElementById('settings-btn-game');
+            const settingsModal = document.getElementById('settings-modal');
+            const closeSettingsModalBtn = document.getElementById('close-settings-modal');
+            const apiKeyInput = document.getElementById('api-key-input');
+            const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+            
+            
+            // --- FIREBASE INITIALIZATION ---
+            try {
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                setLogLevel('Debug'); // Show detailed logs in the console. This now correctly refers to the firestore setLogLevel
+
+                // --- PHASE 3: Make more services available to the main app script ---
+                // --- BYOK: Added getApiKey ---
+                window.firebaseServices = { db, appId, getDoc, doc, addDoc, collection, getAuth, getApiKey };
+
+                // --- FIREBASE AUTHENTICATION (The "Bouncer") ---
+                
+                // This is the most important auth function.
+                // It runs automatically when the page loads AND when someone logs in or out.
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        // --- USER IS LOGGED IN ---
+                        console.log("User is logged in:", user.uid);
+                        currentUserId = user.uid;
+                        showLoggedInUI(user);
+                        loadUserLessons(user.uid);
+                    } else {
+                        // --- USER IS LOGGED OUT ---
+                        console.log("User is logged out.");
+                        currentUserId = null;
+                        showLoggedOutUI();
+                        
+                        // If no user, sign in anonymously for this session
+                        // This gives us a temporary ID for any database interactions
+                        // (We'll use this later for student work)
+                        if (typeof __initial_auth_token !== 'undefined') {
+                             signInWithCustomToken(auth, __initial_auth_token).catch(handleAuthError);
+                        } else {
+                             signInAnonymously(auth).catch(handleAuthError);
+                        }
+                    }
+                    // --- PHASE 4: Update gallery buttons based on login state ---
+                    updateGalleryButtonState();
+                });
+
+                function handleAuthError(error) {
+                    console.error("Anonymous Sign-In Error:", error);
+                    // Handle error, maybe show a message to the user
+                }
+
+                // --- AUTH UI FUNCTIONS ---
+                function showLoggedInUI(user) {
+                    loginBtn.classList.add('hidden');
+                    logoutBtn.classList.remove('hidden');
+                    myLessonsBtn.classList.remove('hidden');
+                    logoutBtnGame.classList.remove('hidden');
+                    saveLessonBtn.classList.remove('hidden');
+                    
+                    // --- BYOK: Show settings buttons ---
+                    settingsBtn.classList.remove('hidden');
+                    settingsBtnGame.classList.remove('hidden');
+                }
+
+                function showLoggedOutUI() {
+                    loginBtn.classList.remove('hidden');
+                    logoutBtn.classList.add('hidden');
+                    myLessonsBtn.classList.add('hidden');
+                    logoutBtnGame.classList.add('hidden');
+                    saveLessonBtn.classList.add('hidden');
+                    myLessonsList.innerHTML = '<p class="text-gray-500">Log in to see your saved lessons.</p>';
+                    
+                    // --- BYOK: Hide settings buttons ---
+                    settingsBtn.classList.add('hidden');
+                    settingsBtnGame.classList.add('hidden');
+                }
+
+                // --- AUTH EVENT HANDLERS ---
+                loginBtn.addEventListener('click', async () => {
+                    const provider = new GoogleAuthProvider();
+                    try {
+                        await signInWithPopup(auth, provider);
+                        // onAuthStateChanged will handle the rest
+                    } catch (error) {
+                        console.error("Login Error:", error);
+                        alert(`Login failed: ${error.message}`);
+                    }
+                });
+
+                const handleLogout = async () => {
+                    try {
+                        await signOut(auth);
+                        // onAuthStateChanged will handle the rest
+                        window.location.reload(); // Reload to reset state
+                    } catch (error) {
+                        console.error("Logout Error:", error);
+                    }
+                };
+                logoutBtn.addEventListener('click', handleLogout);
+                logoutBtnGame.addEventListener('click', handleLogout);
+
+                // --- FIRESTORE DATABASE (The "Pantry") ---
+
+                // 1. LOAD all lessons for the logged-in teacher
+                function loadUserLessons(userId) {
+                    if (!userId) return;
+                    
+                    myLessonsList.innerHTML = '<p class="text-gray-500">Loading lessons...</p>';
+                    
+                    // Path to the teacher's private lesson collection
+                    const lessonsCollectionPath = `artifacts/${appId}/users/${userId}/lessons`;
+                    const q = query(collection(db, lessonsCollectionPath));
+
+                    // Use onSnapshot for REAL-TIME updates!
+                    // (You can also use getDocs() for a one-time fetch)
+                    onSnapshot(q, (querySnapshot) => {
+                        lessonCache = []; // Clear cache
+                        if (querySnapshot.empty) {
+                            myLessonsList.innerHTML = '<p class="text-gray-500">You have no saved lessons yet.</p>';
+                            return;
+                        }
+                        
+                        myLessonsList.innerHTML = ''; // Clear list
+                        querySnapshot.forEach((doc) => {
+                            const lesson = doc.data();
+                            lesson.id = doc.id; // Store the firestore ID
+                            lessonCache.push(lesson); // Add to cache
+                            
+                            // Create a button for each lesson
+                            const lessonEl = document.createElement('div');
+                            lessonEl.className = "flex justify-between items-center p-3 bg-gray-100 rounded-lg";
+                            
+                            const lessonName = document.createElement('span');
+                            lessonName.textContent = lesson.name || 'Untitled Lesson';
+                            lessonName.className = "font-semibold";
+                            lessonEl.appendChild(lessonName);
+                            
+                            // FIXED: Changed HTML comment to JS comment
+                            // DELETED: This stray HTML block was causing a SyntaxError
+                            
+                            const btnContainer = document.createElement('div');
+                            const loadBtn = document.createElement('button');
+                            loadBtn.textContent = 'Load';
+                            loadBtn.className = "load-lesson-btn bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow";
+                            loadBtn.dataset.id = lesson.id;
+                            btnContainer.appendChild(loadBtn);
+                            
+                            // --- PHASE 2: Add Share Button ---
+                            const shareBtn = document.createElement('button');
+                            shareBtn.textContent = 'Share';
+                            shareBtn.className = "share-lesson-btn bg-purple-500 hover:bg-purple-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow ml-2";
+                            shareBtn.dataset.id = lesson.id;
+                            btnContainer.appendChild(shareBtn);
+                            
+                            // --- PHASE 3: Add View Submissions Button ---
+                            const viewSubmissionsBtn = document.createElement('button');
+                            viewSubmissionsBtn.textContent = 'Submissions';
+                            viewSubmissionsBtn.className = "view-submissions-btn bg-cyan-500 hover:bg-cyan-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow ml-2";
+                            // Link this button to the PUBLIC (shared) lesson ID
+                            if (lesson.sharedLessonId) {
+                                viewSubmissionsBtn.dataset.sharedId = lesson.sharedLessonId;
+                                viewSubmissionsBtn.dataset.lessonName = lesson.name || 'Untitled Lesson';
+                            } else {
+                                viewSubmissionsBtn.disabled = true;
+                                viewSubmissionsBtn.title = "Share this lesson first to enable submissions";
+                                viewSubmissionsBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                            }
+                            btnContainer.appendChild(viewSubmissionsBtn);
+                            
+                            // --- PHASE 4: Add Publish Button ---
+                            const publishBtn = document.createElement('button');
+                            publishBtn.className = "publish-lesson-btn text-white text-sm font-bold py-1 px-3 rounded-md shadow ml-2";
+                            publishBtn.dataset.privateId = lesson.id;
+                            
+                            if (lesson.sharedLessonId) {
+                                publishBtn.dataset.sharedId = lesson.sharedLessonId;
+                                if (lesson.isPublic) {
+                                    publishBtn.textContent = 'Unpublish';
+                                    publishBtn.classList.add('bg-yellow-500', 'hover:bg-yellow-600');
+                                    publishBtn.title = "Remove from public gallery";
+                                } else {
+                                    publishBtn.textContent = 'Publish';
+                                    publishBtn.classList.add('bg-orange-500', 'hover:bg-orange-600');
+                                    publishBtn.title = "Publish to public gallery";
+                                }
+                            } else {
+                                publishBtn.textContent = 'Publish';
+                                publishBtn.disabled = true;
+                                publishBtn.title = "Share this lesson first to enable publishing";
+                                publishBtn.classList.add('opacity-50', 'cursor-not-allowed', 'bg-gray-400');
+                            }
+                            btnContainer.appendChild(publishBtn);
+                            
+                            const deleteBtn = document.createElement('button');
+                            deleteBtn.textContent = 'Delete';
+                            deleteBtn.className = "delete-lesson-btn bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow ml-2";
+                            deleteBtn.dataset.id = lesson.id;
+                            btnContainer.appendChild(deleteBtn);
+                            
+                            lessonEl.appendChild(btnContainer);
+                            myLessonsList.appendChild(lessonEl);
+                        });
+                    }, (error) => {
+                        console.error("Error loading lessons: ", error);
+                        myLessonsList.innerHTML = '<p class="text-red-500">Error loading lessons.</p>';
+                    });
+                }
+
+                // 2. SAVE the current lesson
+                async function saveLessonToFirestore(lessonName) {
+                    if (!currentUserId) {
+                        alert("You must be logged in to save a lesson.");
+                        return;
+                    }
+                    
+                    // Get the current lesson state from our app
+                    const lessonConfig = {
+                        gameMode: window.beebotApp.getGameMode(),
+                        customBeeImageUrl: window.beebotApp.getCustomBeeImage(),
+                        // Stringify nested lessonData array
+                        lessonData: JSON.stringify(window.beebotApp.getLessonData())
+                    };
+                    
+                    // VITAL FIX: Stringify the entire config object to avoid "invalid nested entity" error
+                    const configString = JSON.stringify(lessonConfig);
+
+                    const lessonsCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
+                    
+                    try {
+                        const docRef = await addDoc(collection(db, lessonsCollectionPath), {
+                            name: lessonName,
+                            config: configString, // <--- SAVING THE ENTIRE CONFIG AS A STRING
+                            createdAt: new Date().toISOString(),
+                            isPublic: false, // --- PHASE 4: Default to private
+                            sharedLessonId: null // --- PHASE 4: Default to null
+                        });
+                        console.log("Lesson saved with ID: ", docRef.id);
+                        window.beebotApp.showToast("Lesson saved online!");
+                        saveLessonModal.classList.add('hidden');
+                    } catch (e) {
+                        console.error("Error adding document: ", e);
+                        alert(`Error saving lesson: ${e.message}`);
+                    }
+                }
+                
+                // --- PHASE 2: Function to share a lesson ---
+                async function shareLesson(lessonId) {
+                    if (!currentUserId) {
+                        alert("You must be logged in to share a lesson.");
+                        return;
+                    }
+                    
+                    // 1. Find the lesson from our cache
+                    const lesson = lessonCache.find(l => l.id === lessonId);
+                    if (!lesson) {
+                        alert("Error: Could not find lesson to share.");
+                        return;
+                    }
+                    
+                    // --- PHASE 4: Check if already shared ---
+                    if (lesson.sharedLessonId) {
+                        const shareUrl = `${window.location.origin}${window.location.pathname}?lesson=${lesson.sharedLessonId}`;
+                        shareLinkInput.value = shareUrl;
+                        shareLinkModal.classList.remove('hidden');
+                        shareLinkInput.select();
+                        window.beebotApp.showToast("This lesson is already shared!");
+                        return;
+                    }
+                    
+                    // 2. This is the *public* collection path
+                    const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
+                    
+                    try {
+                        // 3. Add a *copy* of the lesson config to the public collection
+                        // IMPORTANT: The config here is already a string because it was saved that way in saveLessonToFirestore
+                        const docRef = await addDoc(collection(db, publicCollectionPath), {
+                            config: lesson.config, // Save the config string
+                            teacherId: currentUserId, // Keep track of who made it
+                            originalName: lesson.name,
+                            sharedAt: new Date().toISOString(),
+                            isPublic: false // --- PHASE 4: Default to not public
+                        });
+                        
+                        // --- PHASE 3: CRITICAL LINK ---
+                        // Save the new public/shared ID back to the teacher's private lesson
+                        // This links the private lesson to its public counterpart
+                        const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                        await updateDoc(privateLessonRef, {
+                            sharedLessonId: docRef.id
+                        });
+                        // The onSnapshot listener will auto-update the UI, enabling the "Submissions" button
+                        
+                        // 4. Generate the shareable link
+                        const shareUrl = `${window.location.origin}${window.location.pathname}?lesson=${docRef.id}`;
+                        
+                        // 5. Show the modal with the link
+                        shareLinkInput.value = shareUrl;
+                        shareLinkModal.classList.remove('hidden');
+                        shareLinkInput.select(); // Select the text for easy copying
+                        
+                    } catch (e) {
+                        console.error("Error sharing lesson: ", e);
+                        alert(`Error sharing lesson: ${e.message}`);
+                    }
+                }
+                
+                // --- PHASE 3: Function to view submissions for a lesson ---
+                async function viewSubmissions(sharedLessonId, lessonName) {
+                    submissionsLessonName.textContent = lessonName;
+                    submissionsList.innerHTML = '<p class="text-gray-500">Loading submissions...</p>';
+                    submissionsModal.classList.remove('hidden');
+
+                    try {
+                        const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
+                        // Query all submissions WHERE the lessonId matches our shared ID
+                        const q = query(
+                            collection(db, submissionsCollectionPath),
+                            where("lessonId", "==", sharedLessonId)
+                        );
+
+                        const querySnapshot = await getDocs(q);
+
+                        if (querySnapshot.empty) {
+                            submissionsList.innerHTML = '<p class="text-gray-500">No submissions found for this lesson yet.</p>';
+                            return;
+                        }
+
+                        submissionsList.innerHTML = '';
+                        querySnapshot.forEach((doc) => {
+                            const submission = doc.data();
+                            
+                            const el = document.createElement('div');
+                            el.className = "flex justify-between items-center p-3 bg-gray-100 rounded-lg";
+                            
+                            const info = document.createElement('span');
+                            const submittedDate = new Date(submission.submittedAt).toLocaleString(undefined, { short: 'numeric' });
+                            info.textContent = `${submission.studentName || 'Anonymous'} (${submittedDate})`;
+                            info.className = "font-semibold";
+                            el.appendChild(info);
+                            
+                            const viewBtn = document.createElement('button');
+                            viewBtn.textContent = 'View Work';
+                            viewBtn.className = "view-work-btn bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow";
+                            // Store work data directly on the button
+                            viewBtn.dataset.work = submission.work; // This is the JSON string
+                            viewBtn.dataset.studentName = submission.studentName || 'Anonymous';
+                            // --- VIZ: Add the sharedLessonId to the button ---
+                            // This is the key! Now the button knows which lesson to fetch the grid for.
+                            viewBtn.dataset.sharedLessonId = sharedLessonId; 
+                            el.appendChild(viewBtn);
+                            
+                            submissionsList.appendChild(el);
+                        });
+
+                    } catch (e) {
+                        console.error("Error fetching submissions: ", e);
+                        submissionsList.innerHTML = `<p class="text-red-500">Error loading submissions: ${e.message}</p>`;
+                    }
+                }
+                
+                // --- PHASE 4: Function to toggle public status ---
+                async function toggleLessonPublic(privateId, sharedId, currentStatus) {
+                    if (!currentUserId) return;
+                    
+                    const newStatus = !currentStatus;
+                    const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${sharedId}`);
+                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${privateId}`);
+                    
+                    try {
+                        // Update both public and private docs
+                        await updateDoc(publicLessonRef, { isPublic: newStatus });
+                        await updateDoc(privateLessonRef, { isPublic: newStatus });
+                        
+                        if (newStatus) {
+                            window.beebotApp.showToast("Lesson published to gallery!");
+                        } else {
+                            window.beebotApp.showToast("Lesson removed from gallery.");
+                        }
+                    } catch (e) {
+                        console.error("Error updating public status:", e);
+                        alert(`Error: ${e.message}`);
+                    }
+                }
+                
+                // --- PHASE 4: Function to load the public gallery ---
+                async function loadPublicGallery() {
+                    galleryList.innerHTML = '<p class="text-gray-500">Loading public lessons...</p>';
+                    
+                    try {
+                        const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
+                        const q = query(
+                            collection(db, publicCollectionPath),
+                            where("isPublic", "==", true)
+                        );
+
+                        const querySnapshot = await getDocs(q);
+
+                        if (querySnapshot.empty) {
+                            galleryList.innerHTML = '<p class="text-gray-500">No public lessons found yet. Check back soon!</p>';
+                            return;
+                        }
+
+                        galleryList.innerHTML = '';
+                        querySnapshot.forEach((doc) => {
+                            const lesson = doc.data();
+                            lesson.id = doc.id;
+                            
+                            const el = document.createElement('div');
+                            el.className = "flex justify-between items-center p-3 bg-gray-100 rounded-lg";
+                            
+                            const info = document.createElement('span');
+                            info.textContent = lesson.originalName || 'Untitled Lesson';
+                            // TODO: Add teacher name if we store it (requires another lookup)
+                            info.className = "font-semibold";
+                            el.appendChild(info);
+                            
+                            const cloneBtn = document.createElement('button');
+                            cloneBtn.textContent = 'Clone';
+                            cloneBtn.className = "clone-lesson-btn bg-green-500 hover:bg-green-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow";
+                            cloneBtn.dataset.publicId = lesson.id;
+                            if (!currentUserId) {
+                                cloneBtn.disabled = true;
+                                cloneBtn.title = "Log in to clone this lesson";
+                                cloneBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                            }
+                            el.appendChild(cloneBtn);
+                            
+                            galleryList.appendChild(el);
+                        });
+
+                    } catch (e) {
+                        console.error("Error fetching public gallery: ", e);
+                        galleryList.innerHTML = `<p class="text-red-500">Error loading gallery: ${e.message}</p>`;
+                    }
+                }
+                
+                // --- PHASE 4: Function to update gallery buttons based on login state ---
+                function updateGalleryButtonState() {
+                    // This function is called by onAuthStateChanged
+                    const allCloneButtons = galleryList.querySelectorAll('.clone-lesson-btn');
+                    if (currentUserId) {
+                        allCloneButtons.forEach(btn => {
+                            btn.disabled = false;
+                            btn.title = "Clone to 'My Lessons'";
+                            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                        });
+                    } else {
+                        allCloneButtons.forEach(btn => {
+                            btn.disabled = true;
+                            btn.title = "Log in to clone this lesson";
+                            btn.classList.add('opacity-50', 'cursor-not-allowed');
+                        });
+                    }
+                }
+                
+                // --- PHASE 4: Function to clone a public lesson ---
+                async function cloneLesson(publicId) {
+                    if (!currentUserId) {
+                        alert("Please log in or create an account to clone lessons.");
+                        return;
+                    }
+                    
+                    try {
+                        // 1. Get the public lesson data
+                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${publicId}`);
+                        const publicDoc = await getDoc(publicLessonRef);
+                        
+                        if (!publicDoc.exists()) {
+                            throw new Error("Public lesson not found.");
+                        }
+                        
+                        const publicLesson = publicDoc.data();
+                        
+                        // 2. Create a new private lesson
+                        const privateCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
+                        // The config here is a string, which is exactly what we want to save.
+                        const docRef = await addDoc(collection(db, privateCollectionPath), {
+                            name: `(Clone) ${publicLesson.originalName || 'Untitled Lesson'}`,
+                            config: publicLesson.config, // Copy the config string
+                            createdAt: new Date().toISOString(),
+                            clonedFrom: publicId,
+                            isPublic: false, // Cloned lesson is private
+                            sharedLessonId: null // Cloned lesson is not shared
+                        });
+                        
+                        console.log("Lesson cloned with ID:", docRef.id);
+                        window.beebotApp.showToast("Lesson cloned! It's now in 'My Lessons'.");
+                        galleryModal.classList.add('hidden');
+
+                    } catch (e) {
+                        console.error("Error cloning lesson:", e);
+                        alert(`Error cloning lesson: ${e.message}`);
+                    }
+                }
+
+
+                // 3. DELETE a specific lesson
+                async function deleteLesson(lessonId) {
+                    if (!currentUserId) return;
+                    
+                    // Simple confirm dialog (replace with custom modal later)
+                    // We must avoid using native window.confirm in a sandbox environment
+                    // if (!confirm("Are you sure you want to delete this lesson? This cannot be undone.")) {
+                    //     return;
+                    // }
+                    
+                    // For now, assume confirmation logic is handled externally or skip.
+                    
+                    // --- PHASE 4: Also delete the shared lesson if it exists ---
+                    const lesson = lessonCache.find(l => l.id === lessonId);
+                    if (lesson && lesson.sharedLessonId) {
+                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${lesson.sharedLessonId}`);
+                        try {
+                            await deleteDoc(publicLessonRef);
+                            window.beebotApp.showToast("Public copy deleted.");
+                        } catch (e) {
+                            console.error("Error deleting public lesson, proceeding with private delete:", e);
+                        }
+                    }
+                    
+                    const lessonDocPath = `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`;
+                    try {
+                        await deleteDoc(doc(db, lessonDocPath));
+                        window.beebotApp.showToast("Lesson deleted.");
+                        // The onSnapshot listener will automatically update the UI
+                    } catch (e) {
+                        console.error("Error deleting document: ", e);
+                        // alert(`Error deleting lesson: ${e.message}`); // Avoid alert
+                    }
+                }
+
+                // 4. LOAD a specific lesson to the editor
+                function loadSpecificLesson(lessonId) {
+                    const lesson = lessonCache.find(l => l.id === lessonId);
+                    if (lesson && lesson.config) {
+                        // We found the lesson in our cache
+                        console.log("Loading lesson from cache:", lesson.name);
+                        window.beebotApp.loadSavedLesson(lesson.config);
+                        myLessonsModal.classList.add('hidden');
+                    } else {
+                        // Fallback (shouldn't happen with onSnapshot)
+                        console.error("Could not find lesson in cache. This is unexpected.");
+                        // alert("Error: Could not find lesson to load."); // Avoid alert
+                    }
+                }
+                
+                // --- BYOK: Functions to save/get API key ---
+                
+                async function saveApiKey() {
+                    if (!currentUserId) return;
+                    
+                    const key = apiKeyInput.value.trim();
+                    if (!key) {
+                        // alert("Please enter an API key."); // Avoid alert
+                        window.beebotApp.showToast("Please enter an API key.", 2000);
+                        return;
+                    }
+                    
+                    // "Encrypt" (obscure) the key using Base64
+                    const encodedKey = btoa(key);
+                    const settingsDocPath = `artifacts/${appId}/users/${currentUserId}/settings/main`;
+                    
+                    try {
+                        // Use setDoc with merge:true to create or update the settings doc
+                        await setDoc(doc(db, settingsDocPath), { 
+                            geminiApiKey: encodedKey 
+                        }, { merge: true });
+                        
+                        window.beebotApp.showToast("API Key saved securely!");
+                        settingsModal.classList.add('hidden');
+                    } catch (e) {
+                        console.error("Error saving API key:", e);
+                        // alert(`Error saving key: ${e.message}`); // Avoid alert
+                        window.beebotApp.showToast("Error saving key.", 2000);
+                    }
+                }
+                
+                async function getApiKey() {
+                    if (!currentUserId) return null;
+                    
+                    const settingsDocPath = `artifacts/${appId}/users/${currentUserId}/settings/main`;
+                    
+                    try {
+                        const docSnap = await getDoc(doc(db, settingsDocPath));
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.geminiApiKey) {
+                                // "Decrypt" the key
+                                return atob(data.geminiApiKey);
+                            }
+                        }
+                        return null; // No key saved yet
+                    } catch (e) {
+                        console.error("Error fetching API key:", e);
+                        return null;
+                    }
+                }
+                
+                
+                // --- FIREBASE-RELATED EVENT LISTENERS ---
+                
+                // Show/Hide "My Lessons" Modal
+                myLessonsBtn.addEventListener('click', () => {
+                    myLessonsModal.classList.remove('hidden');
+                });
+                closeLessonsModalBtn.addEventListener('click', () => {
+                    myLessonsModal.classList.add('hidden');
+                });
+                
+                // Show/Hide "Save Lesson" Modal
+                saveLessonBtn.addEventListener('click', () => {
+                    lessonNameInput.value = `My Lesson ${lessonCache.length + 1}`;
+                    saveLessonModal.classList.remove('hidden');
+                    lessonNameInput.focus();
+                });
+                saveLessonModalCancel.addEventListener('click', () => {
+                    saveLessonModal.classList.add('hidden');
+                });
+                saveLessonModalSave.addEventListener('click', () => {
+                    const lessonName = lessonNameInput.value.trim();
+                    if (lessonName) {
+                        saveLessonToFirestore(lessonName);
+                    } else {
+                        // alert("Please enter a name for your lesson."); // Avoid alert
+                        window.beebotApp.showToast("Please enter a name for your lesson.", 2000);
+                    }
+                });
+                
+                // Handle Clicks inside "My Lessons" list (Event Delegation)
+                myLessonsList.addEventListener('click', (e) => {
+                    const target = e.target;
+                    if (target.classList.contains('load-lesson-btn')) {
+                        const lessonId = target.dataset.id;
+                        loadSpecificLesson(lessonId);
+                    } else if (target.classList.contains('delete-lesson-btn')) {
+                        const lessonId = target.dataset.id;
+                        deleteLesson(lessonId);
+                    // --- PHASE 2: Handle Share Button Click ---
+                    } else if (target.classList.contains('share-lesson-btn')) {
+                        const lessonId = target.dataset.id;
+                        shareLesson(lessonId);
+                    // --- PHASE 3: Handle View Submissions Button Click ---
+                    } else if (target.classList.contains('view-submissions-btn')) {
+                        const sharedId = target.dataset.sharedId;
+                        const lessonName = target.dataset.lessonName;
+                        viewSubmissions(sharedId, lessonName);
+                    // --- PHASE 4: Handle Publish Button Click ---
+                    } else if (target.classList.contains('publish-lesson-btn')) {
+                        const privateId = target.dataset.privateId;
+                        const sharedId = target.dataset.sharedId;
+                        const currentStatus = target.textContent === 'Unpublish'; // true if public
+                        toggleLessonPublic(privateId, sharedId, currentStatus);
+                    }
+                });
+                
+                // --- PHASE 2: Share Modal Listeners ---
+                closeShareModalBtn.addEventListener('click', () => {
+                    shareLinkModal.classList.add('hidden');
+                });
+                
+                copyLinkBtn.addEventListener('click', () => {
+                    shareLinkInput.select();
+                    try {
+                        // Use execCommand for broad compatibility in iFrames
+                        document.execCommand('copy');
+                        window.beebotApp.showToast("Link copied to clipboard!", 2000);
+                    } catch (err) {
+                        console.error('Failed to copy: ', err);
+                        window.beebotApp.showToast("Failed to copy link.", 2000);
+                    }
+                });
+                
+                // --- PHASE 3: Submissions Modal Listeners ---
+                closeSubmissionsModalBtn.addEventListener('click', () => {
+                    submissionsModal.classList.add('hidden');
+                });
+                
+                // --- VIZ: This entire listener is rebuilt ---
+                submissionsList.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('view-work-btn')) {
+                        const studentName = e.target.dataset.studentName;
+                        const workString = e.target.dataset.work;
+                        const sharedLessonId = e.target.dataset.sharedLessonId;
+                        
+                        viewWorkStudentName.textContent = `${studentName}'s Submitted Work`;
+                        
+                        // Clear old content and show loader
+                        viewWorkContent.textContent = 'Loading commands...';
+                        viewWorkGrid.innerHTML = ''; // Clear grid
+                        viewWorkCanvas.getContext('2d').clearRect(0, 0, viewWorkCanvas.width, viewWorkCanvas.height);
+                        viewWorkLoader.classList.remove('hidden');
+                        viewWorkGrid.classList.add('hidden');
+                        
+                        // Show the modal
+                        viewWorkModal.classList.remove('hidden');
+                        
+                        // Call the new async function to populate the modal
+                        visualizeStudentWork(sharedLessonId, workString);
+                    }
+                });
+                
+                // --- VIZ: New async function to build the visualizer ---
+                async function visualizeStudentWork(sharedLessonId, workString) {
+                    try {
+                        // 1. Fetch the lesson config string
+                        const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${sharedLessonId}`;
+                        const lessonDocRef = doc(db, lessonDocPath);
+                        const lessonDoc = await getDoc(lessonDocRef);
+
+                        if (!lessonDoc.exists()) {
+                            throw new Error("Lesson not found. It may have been deleted.");
+                        }
+
+                        // Parse the stored config string
+                        let lessonConfigString = lessonDoc.data().config;
+                        let lessonConfig = JSON.parse(lessonConfigString);
+
+                        // Parse the nested lessonData array
+                        if (typeof lessonConfig.lessonData === 'string') {
+                            lessonConfig.lessonData = JSON.parse(lessonConfig.lessonData);
+                        }
+                        
+                        // We will visualize Slide 1
+                        const slide = lessonConfig.lessonData[0];
+                        const gridRows = slide.gridRows;
+                        const gridCols = slide.gridCols;
+                        const gridData = slide.gridData;
+                        const initialState = slide.initialBeebotState;
+
+                        // 2. Parse the student's work
+                        const workData = JSON.parse(workString);
+                        const slide1Commands = workData[0] || [];
+
+                        // 3. Populate the raw commands list for ALL slides
+                        let formattedWork = '';
+                        if (workData && workData.length > 0) {
+                            workData.forEach((slideCommands, index) => {
+                                formattedWork += `Slide ${index + 1}:\n[ ${slideCommands.join(', ')} ]\n\n`;
+                            });
+                        } else {
+                            formattedWork = 'No commands were submitted.';
+                        }
+                        viewWorkContent.textContent = formattedWork;
+                        
+                        // 4. Build the mini-grid UI
+                        viewWorkGrid.innerHTML = ''; // Clear again
+                        viewWorkGrid.style.gridTemplateRows = `repeat(${gridRows}, 1fr)`;
+                        viewWorkGrid.style.gridTemplateColumns = `repeat(${gridCols}, 1fr)`;
+
+                        for (let r = 0; r < gridRows; r++) {
+                            for (let c = 0; c < gridCols; c++) {
+                                const cellData = gridData[r][c];
+                                const cell = document.createElement('div');
+                                cell.className = 'view-work-cell';
+                                
+                                if (cellData.type === 'image') {
+                                    const img = document.createElement('img');
+                                    img.src = cellData.value;
+                                    cell.appendChild(img);
+                                } else if (cellData.type === 'text') {
+                                    const textDiv = document.createElement('div');
+                                    textDiv.className = 'view-work-cell-text';
+                                    textDiv.textContent = cellData.value;
+                                    const fontSize = cellData.fontSize || 16;
+                                    // Scale font size for the smaller grid
+                                    textDiv.style.fontSize = `${Math.max(fontSize / 2, 8)}px`; 
+                                    cell.appendChild(textDiv);
+                                }
+                                viewWorkGrid.appendChild(cell);
+                            }
+                        }
+                        
+                        // 5. Draw the path on the canvas
+                        // We must wait for the grid to render to get its size
+                        requestAnimationFrame(() => {
+                            const rect = viewWorkGrid.getBoundingClientRect();
+                            const canvas = viewWorkCanvas;
+                            canvas.width = rect.width;
+                            canvas.height = rect.height;
+                            const ctx = canvas.getContext('2d');
+                            
+                            const cellWidth = canvas.width / gridCols;
+                            const cellHeight = canvas.height / gridRows;
+
+                            ctx.strokeStyle = '#FF0000'; // Student path is always red
+                            ctx.lineWidth = 3;
+                            ctx.lineCap = 'round';
+                            ctx.lineJoin = 'round';
+
+                            let pathSimState = { ...initialState };
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(pathSimState.col * cellWidth + cellWidth / 2, pathSimState.row * cellHeight + cellHeight / 2);
+                            
+                            // Simulate the student's commands
+                            for (const cmd of slide1Commands) {
+                                let moved = false;
+                                let newRow = pathSimState.row;
+                                let newCol = pathSimState.col;
+                                
+                                if (cmd === 'F') {
+                                    if (pathSimState.dir === 0) newRow--; // Up
+                                    if (pathSimState.dir === 1) newCol++; // Right
+                                    if (pathSimState.dir === 2) newRow++; // Down
+                                    if (pathSimState.dir === 3) newCol--; // Left
+                                    moved = true;
+                                } else if (cmd === 'B') {
+                                    if (pathSimState.dir === 0) newRow++; // Down
+                                    if (pathSimState.dir === 1) newCol--; // Left
+                                    if (pathSimState.dir === 2) newRow--; // Up
+                                    if (pathSimState.dir === 3) newCol++; // Right
+                                    moved = true;
+                                } else if (cmd === 'L') {
+                                    pathSimState.dir = (pathSimState.dir + 3) % 4;
+                                } else if (cmd === 'R') {
+                                    pathSimState.dir = (pathSimState.dir + 1) % 4;
+                                }
+                                
+                                if (moved && newRow >= 0 && newRow < gridRows && newCol >= 0 && newCol < gridCols) {
+                                    pathSimState.row = newRow;
+                                    pathSimState.col = newCol;
+                                    ctx.lineTo(pathSimState.col * cellWidth + cellWidth / 2, pathSimState.row * cellHeight + cellHeight / 2);
+                                }
+                            }
+                            ctx.stroke(); // Draw the full path
+                            
+                            // Draw start point
+                            ctx.fillStyle = 'green';
+                            ctx.beginPath();
+                            ctx.arc(initialState.col * cellWidth + cellWidth / 2, initialState.row * cellHeight + cellHeight / 2, 5, 0, 2 * Math.PI);
+                            ctx.fill();
+                        });
+                        
+                        // 6. Hide loader, show grid
+                        viewWorkLoader.classList.add('hidden');
+                        viewWorkGrid.classList.remove('hidden');
+
+                    } catch (e) {
+                        console.error("Error visualizing student work:", e);
+                        viewWorkContent.textContent = `Error: ${e.message}`;
+                        viewWorkLoader.classList.add('hidden');
+                    }
+                }
+                
+                closeViewWorkModalBtn.addEventListener('click', () => {
+                    viewWorkModal.classList.add('hidden');
+                });
+                
+                // --- PHASE 4: Gallery Modal Listeners ---
+                galleryBtn.addEventListener('click', () => {
+                    galleryModal.classList.remove('hidden');
+                    loadPublicGallery();
+                });
+                
+                closeGalleryModalBtn.addEventListener('click', () => {
+                    galleryModal.classList.add('hidden');
+                });
+                
+                galleryList.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('clone-lesson-btn')) {
+                        const publicId = e.target.dataset.publicId;
+                        cloneLesson(publicId);
+                    }
+                });
+                
+                // --- BYOK: Settings Modal Listeners ---
+                const openSettings = async () => {
+                    apiKeyInput.value = ''; // Clear for security
+                    const key = await getApiKey(); // Get the saved key
+                    if (key) {
+                        apiKeyInput.value = key; // Pre-fill it
+                    }
+                    settingsModal.classList.remove('hidden');
+                    apiKeyInput.focus();
+                };
+                settingsBtn.addEventListener('click', openSettings);
+                settingsBtnGame.addEventListener('click', openSettings);
+                
+                closeSettingsModalBtn.addEventListener('click', () => {
+                    settingsModal.classList.add('hidden');
+                });
+                
+                saveApiKeyBtn.addEventListener('click', saveApiKey);
+
+
+            } catch (e) {
+                console.error("Firebase initialization failed:", e);
+                // alert("Error: Could not connect to services. Please try again later."); // Avoid alert
+                // Hide all auth-related buttons if Firebase fails
+                document.querySelectorAll('.auth-required').forEach(el => el.classList.add('hidden'));
+            }
+
+        }); // --- END OF DOMContentLoaded ---
+    </script>
+    <style>
+        body, html {
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+        #grid-container {
+            display: grid;
+            position: relative;
+            border: 2px solid #333;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            aspect-ratio: 1 / 1;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        .grid-cell {
+            width: 100%;
+            height: 100%;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem; /* Default for text */
+            font-weight: bold;
+            color: #333;
+            overflow: hidden;
+            position: relative;
+            /* ADDED: Drag and drop transition */
+            transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out, background-color 0.2s;
+        }
+        /* ADDED: Class for the tile being dragged */
+        .grid-cell.dragging {
+            opacity: 0.4;
+            transform: scale(0.9);
+        }
+        
+        .grid-cell.text-mode {
+            cursor: pointer;
+        }
+        .grid-cell.text-mode:not(.student-mode):hover {
+            background-color: #e0f7fa;
+        }
+        .grid-cell.image-mode {
+            /* ADDED: Change cursor based on content */
+            cursor: pointer; /* Default for clicking empty cells */
+        }
+         .grid-cell.image-mode:not(.student-mode):hover {
+            background-color: #e8f5e9;
+        }
+         /* ADDED: Grab cursor for draggable images */
+        .grid-cell.image-mode.has-image:not(.student-mode) {
+            cursor: grab;
+        }
+        .grid-cell.image-mode.has-image:not(.student-mode):active {
+            cursor: grabbing;
+        }
+        
+        .grid-cell.ai-mode {
+            /* ADDED: Change cursor based on content */
+            cursor: pointer;
+        }
+        .grid-cell.ai-mode:not(.student-mode):hover {
+            background-color: #ede7f6;
+        }
+        /* ADDED: Grab cursor for draggable images */
+        .grid-cell.ai-mode.has-image:not(.student-mode) {
+            cursor: grab;
+        }
+        .grid-cell.ai-mode.has-image:not(.student-mode):active {
+            cursor: grabbing;
+        }
+        
+        /* --- ADDED: Styles for UNBOX mode --- */
+        .grid-cell.unbox-mode {
+            cursor: pointer;
+        }
+        .grid-cell.unbox-mode:not(.student-mode):hover {
+            background-color: #ecfeff; /* Light cyan */
+        }
+        .grid-cell.unbox-mode.has-image:not(.student-mode) {
+            cursor: grab;
+        }
+        .grid-cell.unbox-mode.has-image:not(.student-mode):active {
+            cursor: grabbing;
+        }
+        /* --- End of UNBOX styles --- */
+        
+        .grid-cell.selected {
+            border: 3px solid #0288d1;
+            box-shadow: 0 0 10px #0288d1;
+        }
+        .grid-cell img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            /* ADDED: Prevent images from being dragged as "ghost" images */
+            pointer-events: none;
+        }
+        .grid-cell .cell-text {
+            padding: 5%;
+            text-align: center;
+            word-break: break-word;
+            transition: font-size 0.2s ease-in-out;
+            /* ADDED: Prevent text from being selected on drag */
+            user-select: none;
+            /* ADDED: Prevent text div from intercepting drag events */
+            pointer-events: none;
+        }
+
+        #beebot {
+            position: absolute;
+            background-image: url('https://img.icons8.com/plasticine/100/000000/bee.png');
+            background-size: 80%;
+            background-repeat: no-repeat;
+            background-position: center;
+            /* EDITED: Added transform to the transition for smooth rotation! */
+            transition: top 0.5s ease-in-out, left 0.5s ease-in-out, transform 0.5s ease-in-out;
+            z-index: 10;
+        }
+        .command-btn, .slide-btn {
+            transition: all 0.15s ease-out;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .command-btn:active, .slide-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+        }
+        #path-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+        
+        /* --- VIZ: Added styles for the new visualizer modal --- */
+        #view-work-grid {
+            display: grid;
+            position: relative;
+            border: 2px solid #666;
+            background-color: #f9f9f9;
+            /* The grid will be constrained by its parent, max-w-lg */
+            width: 100%;
+            aspect-ratio: 1 / 1; /* Always square */
+        }
+        #view-work-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+        .view-work-cell {
+            width: 100%;
+            height: 100%;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+        .view-work-cell img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .view-work-cell-text {
+            padding: 2%;
+            text-align: center;
+            word-break: break-word;
+            font-weight: bold;
+            color: #333;
+        }
+        /* --- End of VIZ styles --- */
+        
+        /* Ensure 3-column layout has correct height on lg screens */
+        @media (min-width: 1024px) {
+            #game-page > .flex-col {
+                height: calc(100vh - 2rem); /* Full viewport height minus padding */
+            }
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center h-screen overflow-hidden">
+
+    <!-- Homepage View -->
+    <div id="home-page" class="w-full max-w-lg mx-auto text-center p-4"> 
+        <!-- ADDED: Auth buttons for Homepage -->
+        <div class="absolute top-4 right-4 flex gap-2">
+            <!-- PHASE 4: Added Gallery Button -->
+            <button id="gallery-btn" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">Browse Gallery</button>
+            <!-- BYOK: Added Settings Button -->
+            <button id="settings-btn" class="hidden auth-required bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-lg shadow-md">Settings</button>
+            <button id="login-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">Teacher Login</button>
+            <button id="my-lessons-btn" class="hidden auth-required bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">My Lessons</button>
+            <button id="logout-btn-home" class="hidden auth-required bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Logout</button>
+        </div>
+        
+        <h1 class="text-4xl font-bold text-gray-800 mb-6 mt-16">Bee-Bot Lesson Creator</h1> <!-- Added mt-16 for spacing -->
+        
+        <div class="bg-white p-8 rounded-lg shadow-lg">
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label for="rows-input" class="block text-sm font-medium text-gray-700 mb-1">Rows (1-10):</label>
+                    <input type="number" id="rows-input" value="8" min="1" max="10" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                </div>
+                <div>
+                    <label for="cols-input" class="block text-sm font-medium text-gray-700 mb-1">Cols (1-10):</label>
+                    <input type="number" id="cols-input" value="8" min="1" max="10" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                </div>
+            </div>
+            
+             <div class="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                    <label for="start-dir-select" class="block text-sm font-medium text-gray-700 mb-1">Start Direction:</label>
+                    <select id="start-dir-select" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                        <option value="0">Up</option>
+                        <option value="1">Right</option>
+                        <option value="2">Down</option>
+                        <option value="3">Left</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="change-bee-btn" class="block text-sm font-medium text-gray-700 mb-1">Custom Character:</label>
+                    <button id="change-bee-btn" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md text-sm">Upload Image</button>
+                    <input type="file" id="bee-upload-input" class="hidden" accept="image/*">
+                    <p id="bee-status" class="text-xs text-gray-500 mt-1 truncate">Default bee</p>
+                </div>
+            </div>
+            
+            <div class="flex flex-col gap-4">
+                <div class="flex flex-wrap sm:flex-nowrap gap-4">
+                    <button id="start-image-btn" class="w-full sm:flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">Start Image Lesson</button>
+                    <button id="start-text-btn" class="w-full sm:flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">Start Text Lesson</button>
+                    <button id="start-ai-btn" class="w-full sm:flex-1 bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">Start AI Lesson</button>
+                </div>
+                <!-- --- ADDED: UNBOX Button --- -->
+                <button id="start-unbox-btn" class="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">Start UNBOX Lesson (Image+Text+AI)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game View (Initially Hidden) -->
+    <div id="game-page" class="w-full max-w-7xl mx-auto hidden h-full p-4">
+        <!-- EDITED: This is the main 3-col container -->
+        <div class="flex flex-col lg:flex-row gap-4 h-full">
+            
+            <!-- Column 1: Grid Section -->
+            <div class="w-full lg:w-1/2 h-3/5 lg:h-full flex flex-col">
+                 <!-- ADDED: Auth button for Game page -->
+                 <div class="absolute top-2 right-2 z-20 flex gap-2">
+                    <!-- BYOK: Added Settings Button -->
+                    <button id="settings-btn-game" class="hidden auth-required bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-lg shadow-md">Settings</button>
+                    <button id="logout-btn-game" class="hidden auth-required bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Logout</button>
+                 </div>
+                 <input type="text" id="instruction-input" class="w-full text-3xl font-bold text-center text-gray-800 mb-4 p-2 rounded-lg shrink-0">
+                <div class="flex-grow flex items-center justify-center overflow-hidden min-h-0 p-2">
+                    <div id="grid-container" class="w-full lg:w-auto lg:h-full">
+                        <canvas id="path-canvas"></canvas>
+                        <div id="beebot"></div>
+                    </div>
+                </div>
+                <!-- Slide Controls -->
+                <div id="slide-controls" class="mt-4 p-4 bg-gray-200 rounded-lg flex items-center justify-center gap-4 flex-wrap shrink-0">
+                    <button id="prev-slide-btn" class="slide-btn bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md">&lt; Prev</button>
+                    <span id="slide-counter" class="font-semibold text-lg">Slide 1 / 1</span>
+                    <button id="next-slide-btn" class="slide-btn bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg shadow-md">Next &gt;</button>
+                    <button id="add-slide-btn" class="slide-btn bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md teacher-only">+</button>
+                    <button id="delete-slide-btn" class="slide-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md teacher-only">Delete</button>
+                </div>
+            </div>
+
+            <!-- Column 2: Controls Section -->
+            <div class="w-full lg:w-1/4 h-auto lg:h-full bg-white p-6 rounded-lg shadow-lg flex flex-col">
+                <div class="flex-grow">
+                    <h2 class="text-2xl font-bold text-center text-gray-800 mb-4">Controls</h2>
+                    
+                    <!-- EDITED: Re-arranging control layout -->
+                    <div class="grid grid-cols-3 gap-3 mb-4">
+                        <div></div>
+                        <button id="forward-btn" class="command-btn bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 rounded-lg shadow-lg aspect-square flex items-center justify-center">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
+                        </button>
+                        <div></div>
+                        <button id="left-btn" class="command-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-4 rounded-lg shadow-lg aspect-square flex items-center justify-center">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                        </button>
+                         <button id="go-btn" class="command-btn bg-green-500 hover:bg-green-600 text-white font-bold py-4 rounded-lg shadow-lg aspect-square flex items-center justify-center">
+                            GO
+                        </button>
+                        <button id="right-btn" class="command-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-4 rounded-lg shadow-lg aspect-square flex items-center justify-center">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                        </button>
+                        <div></div>
+                         <!-- ADDED: Backward button -->
+                         <button id="backward-btn" class="command-btn bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 rounded-lg shadow-lg aspect-square flex items-center justify-center">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
+                        </button>
+                        <div></div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="clear-btn" class="command-btn bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg">Clear</button>
+                        <button id="stop-btn" class="command-btn bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg shadow-lg">Stop</button>
+                    </div>
+
+                    <div class="mt-4 p-4 bg-gray-100 rounded-lg space-y-3">
+                        <div>
+                            <button id="change-bee-btn-game" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md text-sm">Change Bee Character</button>
+                            <input type="file" id="bee-upload-input-game" class="hidden" accept="image/*">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div>
+                                <label for="pos-row-input" class="block font-semibold text-gray-700">Row:</label>
+                                <input type="number" id="pos-row-input" min="1" class="shadow-sm appearance-none border rounded w-full py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                            </div>
+                            <div>
+                                <label for="pos-col-input" class="block font-semibold text-gray-700">Col:</label>
+                                <input type="number" id="pos-col-input" min="1" class="shadow-sm appearance-none border rounded w-full py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                            </div>
+                            <div class="col-span-2">
+                                <label for="dir-select-input" class="block font-semibold text-gray-700">Facing:</label>
+                                <select id="dir-select-input" class="shadow-sm appearance-none border rounded w-full py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                                    <option value="0">Up</option>
+                                    <option value="1">Right</option>
+                                    <option value="2">Down</option>
+                                    <option value="3">Left</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button id="set-pos-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md text-sm teacher-only">Set Start Position</button>
+
+                    </div>
+                    
+                    <div class="mt-4 flex items-center justify-center gap-3 p-2 bg-gray-100 rounded-lg">
+                        <label for="path-color-picker" class="text-sm font-semibold text-gray-700">Path Color:</label>
+                        <input type="color" id="path-color-picker" value="#FF0000" class="w-10 h-10 border-none p-0 rounded-lg overflow-hidden cursor-pointer">
+                    </div>
+                </div>
+
+                <div id="text-edit-controls" class="mt-4 pt-4 border-t border-gray-200 teacher-only hidden">
+                    <h3 class="font-semibold text-gray-700 mb-2">Edit Tile Text (for selected tile):</h3>
+                    <div class="flex gap-2">
+                        <input type="text" id="tile-text-input" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="Enter text...">
+                        <button id="set-text-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Set</button>
+                    </div>
+                    <!-- ADDED: Font Size Controls -->
+                    <div class="flex items-center gap-2 mt-2">
+                        <span class="text-sm font-medium text-gray-700">Font Size (px):</span>
+                        <button id="font-size-down" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold w-7 h-7 rounded-full shadow-md flex items-center justify-center">-</button>
+                        <span id="current-font-size" class="text-sm font-semibold w-8 text-center">16</span>
+                        <button id="font-size-up" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold w-7 h-7 rounded-full shadow-md flex items-center justify-center">+</button>
+                    </div>
+                </div>
+                
+                <!-- ADDED: Clear Tile button -->
+                <div id="tile-edit-controls" class="mt-4 pt-4 border-t border-gray-200 teacher-only hidden">
+                    <button id="clear-tile-btn" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Clear Selected Tile</button>
+                </div>
+            </div>
+
+            <!-- Column 3: Sequence Section -->
+            <div class="w-full lg:w-1/4 flex-grow lg:flex-grow-0 lg:h-full bg-white p-6 rounded-lg shadow-lg flex flex-col min-h-0">
+                <div class="flex-grow flex flex-col min-h-0">
+                    <h3 class="font-semibold text-gray-700 mb-2 shrink-0">Command Sequence:</h3>
+                    <div id="command-sequence" class="bg-gray-200 p-3 rounded-lg flex-grow overflow-y-auto flex flex-wrap gap-2 content-start"></div>
+                </div>
+                 <div id="student-controls" class="hidden w-full mt-4 space-y-2 shrink-0">
+                     <button id="save-work-btn" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Save Work for this Slide</button>
+                     <button id="export-report-btn" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Export Final Report</button>
+                 </div>
+                 
+                 <!-- EDITED: Teacher "Save" / "Download" buttons -->
+                 <button id="save-lesson-btn" class="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0 teacher-only hidden auth-required">Save Lesson Online</button>
+                 <button id="download-offline-btn" class="w-full mt-2 bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0 teacher-only">Download Lesson (Offline)</button>
+                 <!-- --- ADDED: Print Physical Mat Button --- -->
+                 <button id="print-physical-mat-btn" class="w-full mt-2 bg-pink-500 hover:bg-pink-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0 teacher-only">Print Physical Mat Tiles</button>
+                 <button id="new-game-btn" class="w-full mt-2 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0">New Lesson Setup</button>
+            </div>
+
+        </div>
+    </div>
+    
+    <!-- Toast Notification -->
+    <div id="toast-notification" class="fixed bottom-8 right-8 bg-green-500 text-white py-3 px-6 rounded-lg shadow-lg transition-all duration-300 opacity-0 translate-y-4 z-50">
+        <span id="toast-message"></span>
+    </div>
+
+    <!-- For PDF Report Generation -->
+    <div id="report-generator" class="hidden"></div>
+    
+    <!-- AI Image Generation Modal -->
+    <div id="ai-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+            <h3 class="text-xl font-semibold mb-4">Generate AI Image for Tile</h3>
+            <label for="ai-prompt-input" class="block text-gray-700 text-sm font-bold mb-2">Prompt:</label>
+            <input type="text" id="ai-prompt-input" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="e.g., 'a red apple', 'the letter A'">
+            <div id="ai-modal-loader" class="hidden text-center my-4">
+                <div class="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-gray-600 mt-2">Generating image... Please wait.</p>
+            </div>
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="ai-modal-cancel" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Cancel</button>
+                <button id="ai-modal-generate" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Generate</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- "My Lessons" Modal (ADDED) --- -->
+    <div id="my-lessons-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">My Saved Lessons</h3>
+                <button id="close-lessons-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            <div id="my-lessons-list" class="max-h-96 overflow-y-auto space-y-2">
+                <!-- Lessons will be dynamically loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- --- "Save Lesson" Modal (ADDED) --- -->
+    <div id="save-lesson-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+            <h3 class="text-xl font-semibold mb-4">Save Lesson</h3>
+            <label for="lesson-name-input" class="block text-gray-700 text-sm font-bold mb-2">Lesson Name:</label>
+            <input type="text" id="lesson-name-input" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="My First Lesson">
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="save-lesson-modal-cancel" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Cancel</button>
+                <button id="save-lesson-modal-save" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "Share Link" Modal (PHASE 2) --- -->
+    <div id="share-link-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">Share Lesson Link</h3>
+                <button id="close-share-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            <p class="text-gray-600 mb-2">Anyone with this link can view and play this lesson.</p>
+            <div class="flex gap-2">
+                <input type="text" id="share-link-input" readonly class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight bg-gray-100 focus:outline-none focus:shadow-outline">
+                <button id="copy-link-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Copy</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "Student Name" Modal (PHASE 3) --- -->
+    <div id="student-name-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+            <h3 class="text-xl font-semibold mb-4">Enter Your Name</h3>
+            <p class="text-gray-600 mb-2">Please enter your name to submit your work.</p>
+            <label for="student-name-input" class="block text-gray-700 text-sm font-bold mb-2">Your Name:</label>
+            <input type="text" id="student-name-input" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="Your Name">
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="student-name-cancel" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Cancel</button>
+                <button id="student-name-submit" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Submit</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "View Submissions" Modal (PHASE 3) --- -->
+    <div id="submissions-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">Student Submissions for <span id="submissions-lesson-name" class="text-blue-600"></span></h3>
+                <button id="close-submissions-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            <div id="submissions-list" class="max-h-96 overflow-y-auto space-y-2">
+                <!-- Submissions will be dynamically loaded here -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "View Work" Modal (PHASE 3) --- -->
+    <!-- --- VIZ: This modal has been completely rebuilt --- -->
+    <div id="view-work-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="view-work-student-name" class="text-xl font-semibold">Student's Work</h3>
+                <button id="close-view-work-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            
+            <!-- VIZ: The Loader -->
+            <div id="view-work-loader" class="text-center my-4 hidden">
+                <div class="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-gray-600 mt-2">Loading visualization...</p>
+            </div>
+            
+            <!-- VIZ: The Visualizer Grid (for Slide 1) -->
+            <div id="view-work-grid" class="hidden">
+                <canvas id="view-work-canvas"></canvas>
+                <!-- Mini-grid cells will be built here by JS -->
+            </div>
+            
+            <!-- VIZ: The Raw Commands (for all slides) -->
+            <h4 class="text-lg font-semibold mt-4 mb-2">All Submitted Commands</h4>
+            <pre id="view-work-content" class="max-h-48 overflow-y-auto space-y-2 bg-gray-100 p-4 rounded-md text-sm whitespace-pre-wrap"></pre>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "Public Gallery" Modal (PHASE 4) --- -->
+    <div id="public-gallery-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-xl">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">Public Lesson Gallery</h3>
+                <button id="close-gallery-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            <div id="public-gallery-list" class="max-h-96 overflow-y-auto space-y-2">
+                <!-- Public lessons will be dynamically loaded here -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "Settings" Modal (BYOK) --- -->
+    <div id="settings-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">Settings</h3>
+                <button id="close-settings-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label for="api-key-input" class="block text-sm font-medium text-gray-700 mb-1">Your Google AI API Key</label>
+                    <input type="password" id="api-key-input" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="Enter your API key...">
+                    <p class="text-xs text-gray-500 mt-1">
+                        For generating AI images. You can get a free key from 
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-500 hover:underline">Google AI Studio</a>.
+                    </p>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Your key is saved securely to your private account and is never shared.
+                    </p>
+                </div>
+                <div class="flex justify-end">
+                    <button id="save-api-key-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Save Key</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- --- ADDED: "UNBOX Tile Choice" Modal --- -->
+    <div id="tile-choice-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">Edit Tile</h3>
+                <button id="choice-cancel-btn" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            <p class="text-gray-600 mb-4">What would you like to add to this tile?</p>
+            <div class="space-y-3">
+                <button id="choice-image-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">
+                    Add/Change Image
+                </button>
+                <button id="choice-text-btn" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">
+                    Add/Change Text
+                </button>
+                <button id="choice-ai-btn" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg shadow-md">
+                    Generate with AI
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Use 'module' for top-level import/export -->
+    <script type="module">
+        // Import all the Firebase functions we need
+        // Note: These are already imported in the <head> but we re-declare them
+        // inside the main script logic for clarity.
+        // ... (This is a bit redundant, the main logic is now in the <head> script)
+    </script>
+    
+    <script>
+        // ADDED: Make jsPDF available
+        const { jsPDF } = window.jspdf;
+
+        // --- GLOBAL APP LOGIC ---
+        // We'll wrap our app logic in an object to make it accessible 
+        // to the Firebase script in the <head>.
+        window.beebotApp = (function() {
+            
+            // --- DOM Elements ---
+            const homePage = document.getElementById('home-page');
+            const gamePage = document.getElementById('game-page');
+            const startImageBtn = document.getElementById('start-image-btn');
+            
+            // --- FIXED: Added all the missing element definitions ---
+            const startTextBtn = document.getElementById('start-text-btn');
+            const startAiBtn = document.getElementById('start-ai-btn');
+            const startUnboxBtn = document.getElementById('start-unbox-btn'); // --- ADDED: UNBOX Button ---
+            const newGameBtn = document.getElementById('new-game-btn');
+            const changeBeeBtn = document.getElementById('change-bee-btn');
+            const beeUploadInput = document.getElementById('bee-upload-input');
+            const beeStatus = document.getElementById('bee-status');
+            const downloadOfflineBtn = document.getElementById('download-offline-btn'); // Renamed
+            // --- ADDED: Print Physical Mat Button ---
+            const printPhysicalMatBtn = document.getElementById('print-physical-mat-btn');
+            const gridContainer = document.getElementById('grid-container');
+            const beebot = document.getElementById('beebot');
+            const commandSequenceDiv = document.getElementById('command-sequence');
+            const stopBtn = document.getElementById('stop-btn');
+            const textEditControls = document.getElementById('text-edit-controls');
+            const tileTextInput = document.getElementById('tile-text-input');
+            const setTextBtn = document.getElementById('set-text-btn');
+            
+            // ADDED: Font Size controls
+            const fontSizeDownBtn = document.getElementById('font-size-down');
+            const fontSizeUpBtn = document.getElementById('font-size-up');
+            const currentFontSizeSpan = document.getElementById('current-font-size');
+            
+            // FIXED: Converted HTML comment to JS comment
+            // ADDED: Tile Edit DOM Elements
+            const tileEditControls = document.getElementById('tile-edit-controls');
+            const clearTileBtn = document.getElementById('clear-tile-btn');
+            
+            const pathCanvas = document.getElementById('path-canvas');
+            const pathCtx = pathCanvas.getContext('2d');
+            const pathColorPicker = document.getElementById('path-color-picker');
+            const instructionInput = document.getElementById('instruction-input');
+            const slideControls = {
+                prev: document.getElementById('prev-slide-btn'),
+                next: document.getElementById('next-slide-btn'),
+                counter: document.getElementById('slide-counter'),
+                add: document.getElementById('add-slide-btn'),
+                delete: document.getElementById('delete-slide-btn'),
+            };
+            const studentControls = document.getElementById('student-controls');
+            const saveWorkBtn = document.getElementById('save-work-btn');
+            const exportReportBtn = document.getElementById('export-report-btn');
+            
+            const changeBeeBtnGame = document.getElementById('change-bee-btn-game');
+            const beeUploadInputGame = document.getElementById('bee-upload-input-game');
+            
+            const posRowInput = document.getElementById('pos-row-input');
+            const posColInput = document.getElementById('pos-col-input');
+            const dirSelectInput = document.getElementById('dir-select-input');
+            const setPosBtn = document.getElementById('set-pos-btn');
+
+            const toast = document.getElementById('toast-notification');
+            const toastMessage = document.getElementById('toast-message');
+            const reportGenerator = document.getElementById('report-generator');
+            
+            const aiModal = document.getElementById('ai-modal');
+            const aiPromptInput = document.getElementById('ai-prompt-input');
+            const aiModalCancel = document.getElementById('ai-modal-cancel');
+            const aiModalGenerate = document.getElementById('ai-modal-generate');
+            const aiModalLoader = document.getElementById('ai-modal-loader');
+            
+            // ADDED: Backward button
+            const backwardBtn = document.getElementById('backward-btn');
+            
+            // --- PHASE 3: Student Name Modal ---
+            const studentNameModal = document.getElementById('student-name-modal');
+            const studentNameInput = document.getElementById('student-name-input');
+            const studentNameCancel = document.getElementById('student-name-cancel');
+            const studentNameSubmit = document.getElementById('student-name-submit');
+            
+            // --- ADDED: UNBOX Modal ---
+            const tileChoiceModal = document.getElementById('tile-choice-modal');
+            const choiceCancelBtn = document.getElementById('choice-cancel-btn');
+            const choiceImageBtn = document.getElementById('choice-image-btn');
+            const choiceTextBtn = document.getElementById('choice-text-btn');
+            const choiceAIBtn = document.getElementById('choice-ai-btn');
+            
+            // --- End of FIXED section ---
+
+            
+            // --- Game State ---
+            let commands = [];
+            let beebotState = { row: 7, col: 0, dir: 0 }; // 0=N, 1=E, 2=S, 3=W
+            let gridRows = 8;
+            let gridCols = 8;
+            let isExecuting = false;
+            let selectedCell = null;
+            let pathHistory = [];
+            let gameMode = 'image'; // 'image', 'text', 'ai', 'unbox'
+            let customBeeImageUrl = null;
+            let isStudentMode = false;
+            let studentWork = []; // Array of arrays, one for each slide
+            let studentName = null; // --- PHASE 3: Added student name ---
+            let currentStudentLessonId = null; // --- PHASE 3: Added student lesson ID ---
+
+            // --- Lesson State ---
+            let lessonData = []; // This will hold all slides
+            let currentSlideIndex = 0;
+            
+            // --- ADDED: Font size constants ---
+            const DEFAULT_FONT_SIZE = 16;
+            const MIN_FONT_SIZE = 8;
+            const MAX_FONT_SIZE = 48;
+            const FONT_STEP = 2;
+            
+            // --- ADDED: Drag and Drop state ---
+            let dragSourceCell = null;
+
+            // --- PHASE 2: STUDENT LESSON CHECK (Runs immediately) ---
+            const urlParams = new URLSearchParams(window.location.search);
+            const studentLessonId = urlParams.get('lesson');
+
+            if (studentLessonId) {
+                // This is a student link! Hide homepage immediately.
+                console.log("Student lesson ID found, hiding homepage.");
+                homePage.classList.add('hidden');
+                
+                // --- PHASE 3: Store the lesson ID ---
+                currentStudentLessonId = studentLessonId;
+                
+                // Wait for firebaseServices to be ready from the head script
+                const checkFirebase = setInterval(() => {
+                    if (window.firebaseServices) {
+                        clearInterval(checkFirebase);
+                        console.log("Firebase services ready, loading student lesson...");
+                        loadStudentLessonFromShare(studentLessonId);
+                    }
+                }, 100); // Check every 100ms
+                
+            }
+            
+            async function loadStudentLessonFromShare(lessonId) {
+                const { db, appId, getDoc, doc } = window.firebaseServices;
+                try {
+                    const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${lessonId}`;
+                    const lessonDocRef = doc(db, lessonDocPath);
+                    const lessonDoc = await getDoc(lessonDocRef);
+
+                    if (lessonDoc.exists()) {
+                        console.log("Found shared lesson, loading...");
+                        // The config here is the JSON string we stored in Firestore
+                        const lessonConfigString = lessonDoc.data().config; 
+                        loadStudentLesson(lessonConfigString); // This is the app's internal function
+                    } else {
+                        console.error("Shared lesson not found.");
+                        // alert("The lesson link is invalid or the lesson was deleted."); // Avoid alert
+                        homePage.classList.remove('hidden'); // Show homepage as fallback
+                    }
+                } catch (err) {
+                    console.error("Error loading shared lesson:", err);
+                    // alert("There was an error loading the lesson."); // Avoid alert
+                    homePage.classList.remove('hidden'); // Show homepage as fallback
+                }
+            }
+            // --- END OF PHASE 2 CHECK ---
+
+            // --- UI Functions ---
+            let toastTimer;
+            function showToast(message, duration = 3000) {
+                toastMessage.textContent = message;
+                toast.classList.remove('opacity-0', 'translate-y-4');
+                toast.classList.add('opacity-100', 'translate-y-0');
+
+                clearTimeout(toastTimer);
+                toastTimer = setTimeout(() => {
+                    toast.classList.add('opacity-0', 'translate-y-4');
+                    toast.classList.remove('opacity-100', 'translate-y-0');
+                }, duration);
+            }
+            
+            // --- Homepage & Setup ---
+            
+            function handleBeeUpload(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        customBeeImageUrl = e.target.result;
+                        beeStatus.textContent = file.name;
+                        // Also update the in-game bee if we're on that page
+                        beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
+                    }
+                    reader.readAsDataURL(file);
+                }
+            }
+            changeBeeBtn.addEventListener('click', () => beeUploadInput.click());
+            beeUploadInput.addEventListener('change', handleBeeUpload);
+            
+            changeBeeBtnGame.addEventListener('click', () => beeUploadInputGame.click());
+            beeUploadInputGame.addEventListener('change', handleBeeUpload);
+            
+            function startGame(mode) {
+                gameMode = mode;
+                isStudentMode = false; // Starting a new game is always in teacher mode
+                
+                gridRows = parseInt(document.getElementById('rows-input').value) || 8;
+                gridCols = parseInt(document.getElementById('cols-input').value) || 8;
+                const startDir = parseInt(document.getElementById('start-dir-select').value) || 0;
+                
+                // Calculate start position (bottom-left)
+                const startRow = gridRows - 1;
+                const startCol = 0;
+                
+                // Create the first lesson slide
+                lessonData = [createLesson(gridRows, gridCols, startRow, startCol, startDir)];
+                currentSlideIndex = 0;
+                
+                if (customBeeImageUrl) {
+                    beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
+                }
+                
+                // Show teacher controls based on mode
+                // textEditControls are shown when a cell is clicked
+                document.querySelectorAll('.teacher-only').forEach(el => el.classList.remove('hidden'));
+                studentControls.classList.add('hidden');
+                instructionInput.readOnly = false;
+                
+                // Enable position inputs
+                posRowInput.disabled = false;
+                posColInput.disabled = false;
+                dirSelectInput.disabled = false;
+                
+                loadSlide(currentSlideIndex);
+                
+                homePage.classList.add('hidden');
+                gamePage.classList.remove('hidden');
+                gamePage.classList.add('flex');
+
+                // We need to wait a tiny bit for the layout to render
+                setTimeout(resizeCanvasAndPath, 50);
+            }
+
+            // EDITED: loadStudentLesson now expects the config to be the JSON string
+            function loadStudentLesson(configString) {
+                // VITAL FIX: Parse the top-level config string from Firestore
+                let config;
+                try {
+                    config = JSON.parse(configString);
+                } catch (e) {
+                    console.error("Error parsing student lesson config string:", e);
+                    // alert("Error: Could not read this lesson's configuration."); // Avoid alert
+                    return;
+                }
+                
+                gameMode = config.gameMode;
+                isStudentMode = true; // Loaded games are always in student mode
+                
+                // Fix: Check and parse the nested lessonData string
+                if (typeof config.lessonData === 'string') {
+                    try {
+                        lessonData = JSON.parse(config.lessonData);
+                    } catch (e) {
+                        console.error("Error parsing student lesson data (inner parse failed):", e);
+                        // alert("Error: Could not read this lesson's data."); // Avoid alert
+                        return;
+                    }
+                } else {
+                    lessonData = config.lessonData;
+                }
+
+                currentSlideIndex = 0;
+
+                // Initialize studentWork array with empty command lists
+                studentWork = lessonData.map(() => []);
+
+                if (config.customBeeImageUrl) {
+                    customBeeImageUrl = config.customBeeImageUrl;
+                    beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
+                }
+                
+                // Hide teacher controls, show student controls
+                textEditControls.classList.add('hidden');
+                document.querySelectorAll('.teacher-only').forEach(el => el.classList.add('hidden'));
+                studentControls.classList.remove('hidden');
+                
+                // Disable position inputs in student mode
+                posRowInput.disabled = true;
+                posColInput.disabled = true;
+                dirSelectInput.disabled = true;
+                
+                // --- PHASE 2: Make sure instruction is read-only for students ---
+                instructionInput.readOnly = true;
+                
+                // --- PHASE 3: Rename "Save Work" to "Submit Work" ---
+                saveWorkBtn.textContent = "Submit Work Online";
+
+                loadSlide(currentSlideIndex);
+                
+                homePage.classList.add('hidden');
+                gamePage.classList.remove('hidden');
+                gamePage.classList.add('flex');
+
+                setTimeout(resizeCanvasAndPath, 50);
+            }
+            
+            // --- ADDED: loadSavedLesson now expects the config to be the JSON string
+            function loadSavedLesson(configString) {
+                // VITAL FIX: Parse the top-level config string from Firestore
+                let config;
+                try {
+                    config = JSON.parse(configString);
+                } catch (e) {
+                    console.error("Error parsing saved lesson config string:", e);
+                    // alert("Error: Could not read this lesson's configuration."); // Avoid alert
+                    return;
+                }
+                
+                console.log("Loading saved lesson:", config);
+                gameMode = config.gameMode;
+                isStudentMode = false; // Teacher is loading this
+                
+                // Fix: Check and parse the nested lessonData string
+                if (typeof config.lessonData === 'string') {
+                    try {
+                        lessonData = JSON.parse(config.lessonData);
+                    } catch (e) {
+                        console.error("Error parsing saved lesson data (inner parse failed):", e);
+                        // alert("Error: Could not read this lesson's data."); // Avoid alert
+                        return;
+                    }
+                } else {
+                    lessonData = config.lessonData;
+                }
+
+                currentSlideIndex = 0;
+                studentWork = []; // Teachers don't have "student work" in this context
+
+                if (config.customBeeImageUrl) {
+                    customBeeImageUrl = config.customBeeImageUrl;
+                    beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
+                }
+                
+                // Show teacher controls, hide student controls
+                // textEditControls are shown when cell is clicked
+                document.querySelectorAll('.teacher-only').forEach(el => el.classList.remove('hidden'));
+                studentControls.classList.add('hidden');
+                instructionInput.readOnly = false;
+                
+                // Enable position inputs
+                posRowInput.disabled = false;
+                posColInput.disabled = false;
+                dirSelectInput.disabled = false;
+
+                loadSlide(currentSlideIndex);
+                
+                homePage.classList.add('hidden');
+                gamePage.classList.remove('hidden');
+                gamePage.classList.add('flex');
+
+                setTimeout(resizeCanvasAndPath, 50);
+            }
+            
+            function createLesson(rows, cols, startRow, startCol, startDir) {
+                // Create a 2D array for the grid
+                const gridData = Array.from({ length: rows }, () => 
+                    Array.from({ length: cols }, () => ({
+                        type: 'empty', // 'empty', 'image', 'text'
+                        value: '', // URL or text content
+                        id: crypto.randomUUID(),
+                        fontSize: DEFAULT_FONT_SIZE // ADDED: Default font size
+                    }))
+                );
+                
+                return {
+                    id: crypto.randomUUID(),
+                    gridRows: rows,
+                    gridCols: cols,
+                    instruction: 'Program the Bee-Bot to reach the goal!',
+                    initialBeebotState: {
+                        row: startRow,
+                        col: startCol,
+                        dir: startDir,
+                    },
+                    gridData: gridData
+                };
+            }
+            
+            function loadSlide(index) {
+                if (index < 0 || index >= lessonData.length) return;
+                
+                currentSlideIndex = index;
+                const slide = lessonData[currentSlideIndex];
+                
+                gridRows = slide.gridRows;
+                gridCols = slide.gridCols;
+                instructionInput.value = slide.instruction;
+                
+                // Load commands (student or teacher)
+                if (isStudentMode) {
+                    commands = studentWork[currentSlideIndex] || [];
+                } else {
+                    // In teacher mode, we just clear commands
+                    commands = []; 
+                }
+                
+                // Hide cell-specific controls
+                textEditControls.classList.add('hidden');
+                tileEditControls.classList.add('hidden');
+                selectedCell = null;
+                
+                buildGridCells();
+                stopExecution(); // Resets beebot to slide's initial state
+                updateSlideControls();
+                updateCommandSequence();
+                
+                // Resize canvas and redraw path AFTER grid is built and state is reset
+                // --- FIXED: This was the block with the SyntaxError ---
+                setTimeout(() => {
+                    resizeCanvasAndPath();
+                }, 50);
+            }
+            
+            // --- FIXED: RESTORED ALL MISSING FUNCTIONS ---
+            
+            // --- DRAG-N-DROP: Extracted cell UI update logic ---
+            function updateCellUI(cell, cellData) {
+                cell.innerHTML = ''; // Clear it first
+                cell.classList.remove('has-image'); // Reset cursor
+                
+                if (cellData.type === 'image') {
+                    const img = document.createElement('img');
+                    img.src = cellData.value;
+                    cell.appendChild(img);
+                    cell.classList.add('has-image'); // For grab cursor
+                } else if (cellData.type === 'text') {
+                    const textDiv = document.createElement('div');
+                    textDiv.className = 'cell-text';
+                    textDiv.textContent = cellData.value;
+                    const fontSize = cellData.fontSize || DEFAULT_FONT_SIZE;
+                    textDiv.style.fontSize = `${fontSize}px`;
+                    cell.appendChild(textDiv);
+                }
+            }
+
+            function buildGridCells() {
+                gridContainer.innerHTML = '';
+                // Re-add canvas and beebot
+                gridContainer.appendChild(pathCanvas);
+                gridContainer.appendChild(beebot);
+                
+                gridContainer.style.gridTemplateRows = `repeat(${gridRows}, 1fr)`;
+                gridContainer.style.gridTemplateColumns = `repeat(${gridCols}, 1fr)`;
+                
+                const slideData = lessonData[currentSlideIndex].gridData;
+
+                for (let r = 0; r < gridRows; r++) {
+                    for (let c = 0; c < gridCols; c++) {
+                        const cellData = slideData[r][c];
+                        const cell = document.createElement('div');
+                        // --- UNBOX: Added unbox-mode class ---
+                        cell.className = `grid-cell ${gameMode}-mode`;
+                        cell.dataset.row = r;
+                        cell.dataset.col = c;
+                        cell.dataset.id = cellData.id;
+                        
+                        // --- DRAG-N-DROP: Add draggable attributes and listeners ---
+                        cell.setAttribute('draggable', 'true');
+                        cell.addEventListener('dragstart', handleDragStart);
+                        cell.addEventListener('dragover', handleDragOver);
+                        cell.addEventListener('drop', handleDrop);
+                        cell.addEventListener('dragend', handleDragEnd);
+                        // --- End of DRAG-N-DROP ---
+                        
+                        updateCellUI(cell, cellData); // Use the new UI updater
+                        
+                        cell.addEventListener('click', () => handleCellClick(cell, r, c));
+                        gridContainer.appendChild(cell);
+                    }
+                }
+                
+                if (isStudentMode) {
+                    gridContainer.querySelectorAll('.grid-cell').forEach(el => {
+                        el.classList.add('student-mode');
+                        el.setAttribute('draggable', 'false'); // Students can't drag
+                    });
+                }
+            }
+            
+            // --- DRAG-N-DROP: Event Handlers ---
+            function handleDragStart(e) {
+                const cell = e.target;
+                const row = cell.dataset.row;
+                const col = cell.dataset.col;
+                const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                
+                // --- UNBOX: Allow dragging in unbox mode too ---
+                if (isStudentMode || (gameMode !== 'image' && gameMode !== 'ai' && gameMode !== 'unbox') || cellData.type !== 'image') {
+                    e.preventDefault();
+                    return;
+                }
+
+                dragSourceCell = cell;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', `${row},${col}`); // Store source row/col
+                
+                // Add visual cue
+                setTimeout(() => cell.classList.add('dragging'), 0);
+            }
+
+            function handleDragOver(e) {
+                e.preventDefault(); // Necessary to allow a drop
+                e.dataTransfer.dropEffect = 'move';
+            }
+
+            function handleDrop(e) {
+                e.preventDefault();
+                e.stopPropagation(); // Stop it from bubbling up
+                
+                if (isStudentMode || !dragSourceCell) return;
+                
+                const targetCell = e.target.closest('.grid-cell');
+                if (!targetCell || targetCell === dragSourceCell) return;
+                
+                // Get source info
+                const [sourceRow, sourceCol] = e.dataTransfer.getData('text/plain').split(',');
+                const sourceCellData = lessonData[currentSlideIndex].gridData[sourceRow][sourceCol];
+                
+                // Get target info
+                const targetRow = targetCell.dataset.row;
+                const targetCol = targetCell.dataset.col;
+                const targetCellData = lessonData[currentSlideIndex].gridData[targetRow][targetCol];
+                
+                // 1. Swap the data in our lessonData array
+                lessonData[currentSlideIndex].gridData[sourceRow][sourceCol] = targetCellData;
+                lessonData[currentSlideIndex].gridData[targetRow][targetCol] = sourceCellData;
+
+                // 2. Update the UI for both cells
+                updateCellUI(dragSourceCell, targetCellData);
+                updateCellUI(targetCell, sourceCellData);
+                
+                // Deselect the cell if it was selected
+                if (dragSourceCell === selectedCell || targetCell === selectedCell) {
+                    selectedCell?.classList.remove('selected');
+                    selectedCell = null;
+                    textEditControls.classList.add('hidden');
+                    tileEditControls.classList.add('hidden');
+                }
+            }
+
+            function handleDragEnd(e) {
+                // Clean up visual cues
+                dragSourceCell?.classList.remove('dragging');
+                dragSourceCell = null;
+            }
+            // --- END OF DRAG-N-DROP Handlers ---
+
+            function handleCellClick(cell, row, col) {
+                if (isStudentMode) return;
+
+                // FIXED: Converted HTML comment to JS comment
+                // EDITED: Hide all edit controls first
+                textEditControls.classList.add('hidden');
+                tileEditControls.classList.add('hidden');
+                
+                if (selectedCell) {
+                    selectedCell.classList.remove('selected');
+                }
+                
+                // If clicking the same cell, deselect it
+                if (selectedCell === cell) {
+                    selectedCell = null;
+                    return;
+                }
+
+                selectedCell = cell;
+                selectedCell.classList.add('selected');
+                
+                // FIXED: Converted HTML comment to JS comment
+                // ADDED: Show the clear button for ANY selected cell
+                tileEditControls.classList.remove('hidden');
+                
+                tileTextInput.value = '';
+
+                const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                
+                // --- UNBOX: New logic for game modes ---
+                if (gameMode === 'image') {
+                    if (cellData.type === 'empty') { // Only open uploader if cell is empty
+                        openImageUploader(row, col);
+                    }
+                    // If cell already has an image, clicking just selects it (for the "Clear" button or drag)
+                    
+                } else if (gameMode === 'text') {
+                    // EDITED: Show text input ONLY in text mode
+                    textEditControls.classList.remove('hidden');
+                    if (cellData.type === 'text') {
+                        tileTextInput.value = cellData.value;
+                    }
+                    // ADDED: Show current font size
+                    const currentSize = cellData.fontSize || DEFAULT_FONT_SIZE;
+                    currentFontSizeSpan.textContent = currentSize;
+                    tileTextInput.focus();
+                    
+                } else if (gameMode === 'ai') {
+                    if (cellData.type === 'empty') { // Only open modal if cell is empty
+                        openAIModal(row, col);
+                    }
+                    // If cell has image, clicking just selects it (for "Clear" or drag)
+                } else if (gameMode === 'unbox') {
+                    // In UNBOX mode, ALWAYS open the choice modal
+                    tileChoiceModal.dataset.row = row;
+                    tileChoiceModal.dataset.col = col;
+                    tileChoiceModal.classList.remove('hidden');
+                }
+            }
+            
+            // --- ADDED: UNBOX Helper functions ---
+            function openImageUploader(row, col) {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'image/*';
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const imageUrl = event.target.result;
+                            const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                            cellData.type = 'image';
+                            cellData.value = imageUrl;
+                            cellData.fontSize = DEFAULT_FONT_SIZE; 
+                            
+                            const cell = gridContainer.querySelector(`.grid-cell[data-row='${row}'][data-col='${col}']`);
+                            updateCellUI(cell, cellData);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+                input.click();
+            }
+            
+            function openTextEditor(row, col) {
+                const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                textEditControls.classList.remove('hidden');
+                
+                if (cellData.type === 'text') {
+                    tileTextInput.value = cellData.value;
+                }
+                const currentSize = cellData.fontSize || DEFAULT_FONT_SIZE;
+                currentFontSizeSpan.textContent = currentSize;
+                tileTextInput.focus();
+            }
+            
+            function openAIModal(row, col) {
+                aiPromptInput.value = '';
+                aiModal.classList.remove('hidden');
+                aiModalGenerate.dataset.row = row; // Store target row/col
+                aiModalGenerate.dataset.col = col;
+                aiPromptInput.focus();
+            }
+            // --- End of UNBOX helpers ---
+
+            function updateSlideControls() {
+                slideControls.counter.textContent = `Slide ${currentSlideIndex + 1} / ${lessonData.length}`;
+                slideControls.prev.disabled = (currentSlideIndex === 0);
+                slideControls.next.disabled = (currentSlideIndex === lessonData.length - 1);
+                slideControls.delete.disabled = (lessonData.length <= 1);
+            }
+
+            // --- Command Functions ---
+
+            function addCommand(cmd) {
+                if (isExecuting) return;
+                commands.push(cmd);
+                updateCommandSequence();
+            }
+
+            function updateCommandSequence() {
+                commandSequenceDiv.innerHTML = '';
+                commands.forEach(cmd => {
+                    const cmdIcon = document.createElement('div');
+                    cmdIcon.className = 'w-10 h-10 flex items-center justify-center rounded-md text-gray-800 font-bold text-xl shadow-sm';
+                    let svg = '';
+                    switch(cmd) {
+                        case 'F': 
+                            svg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>';
+                            cmdIcon.classList.add('bg-blue-200');
+                            break;
+                        case 'L': 
+                            svg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>';
+                            cmdIcon.classList.add('bg-yellow-200');
+                            break;
+                        case 'R': 
+                            svg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>';
+                            cmdIcon.classList.add('bg-yellow-200');
+                            break;
+                        // ADDED: Case for Backward
+                        case 'B':
+                            svg = '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>';
+                            cmdIcon.classList.add('bg-blue-200');
+                            break;
+                        // REMOVED: Case for 'P' (Pause)
+                    }
+                    cmdIcon.innerHTML = svg;
+                    commandSequenceDiv.appendChild(cmdIcon);
+                });
+            }
+            
+            // FIXED: Created a new helper function to ONLY reset the bee's position
+            function resetBeeToStart() {
+                const initialState = lessonData[currentSlideIndex].initialBeebotState;
+                beebotState = { ...initialState };
+                pathHistory = [{ ...beebotState }]; // Start path from initial state
+                
+                updateBeebotPosition();
+                updateBeeBotInfo();
+                redrawFullPath(); // Clears canvas and draws just the start point
+            }
+            
+            // FIXED: stopExecution now handles the execution state and calls the helper
+            function stopExecution() {
+                isExecuting = false; // This is the button's job
+                document.getElementById('go-btn').disabled = false; // Re-enable Go
+                resetBeeToStart(); // Call the helper to reset the bee
+            }
+
+            // FIXED: executeCommands now calls the helper and manages its own state
+            async function executeCommands() {
+                if (isExecuting) return;
+                isExecuting = true;
+                document.getElementById('go-btn').disabled = true;
+                
+                // Reset to start using the new helper
+                resetBeeToStart(); 
+                
+                // Wait for reset to apply
+                await new Promise(resolve => setTimeout(resolve, 50)); 
+
+                // Wrapped in try...finally
+                try {
+                    for (const cmd of commands) {
+                        if (!isExecuting) break; // Now stopExecution() can correctly break this loop
+                        
+                        const oldPos = { ...beebotState };
+                        let moved = false;
+                        let waitTime = 500; // Default wait time
+
+                        switch(cmd) {
+                            case 'F':
+                                let newRow = oldPos.row;
+                                let newCol = oldPos.col;
+                                if (oldPos.dir === 0) newRow--; // Up
+                                if (oldPos.dir === 1) newCol++; // Right
+                                if (oldPos.dir === 2) newRow++; // Down
+                                if (oldPos.dir === 3) newCol--; // Left
+                                
+                                // Check bounds
+                                if (newRow >= 0 && newRow < gridRows && newCol >= 0 && newCol < gridCols) {
+                                    beebotState.row = newRow;
+                                    beebotState.col = newCol;
+                                    moved = true;
+                                }
+                                break;
+                            // ADDED: Case for 'B' (Backward)
+                            case 'B':
+                                let backRow = oldPos.row;
+                                let backCol = oldPos.col;
+                                if (oldPos.dir === 0) backRow++; // Down
+                                if (oldPos.dir === 1) backCol--; // Left
+                                if (oldPos.dir === 2) backRow--; // Up
+                                if (oldPos.dir === 3) backCol++; // Right
+                                
+                                // Check bounds
+                                if (backRow >= 0 && backRow < gridRows && backCol >= 0 && backCol < gridCols) {
+                                    beebotState.row = backRow;
+                                    beebotState.col = backCol;
+                                    moved = true;
+                                }
+                                break;
+                            case 'L':
+                                beebotState.dir = (oldPos.dir + 3) % 4; // (0-1)%4 = 3
+                                break;
+                            case 'R':
+                                beebotState.dir = (oldPos.dir + 1) % 4;
+                                break;
+                            // REMOVED: Case for 'P' (Pause)
+                        }
+                        
+                        // Update visual position (starts the 500ms CSS transition)
+                        updateBeebotPosition();
+                        
+                        // Wait for the CSS transition (or pause) to finish
+                        await new Promise(resolve => setTimeout(resolve, waitTime)); 
+                        
+                        if (moved) {
+                            pathHistory.push({ ...beebotState });
+                            redrawFullPath(); // Draw the path AFTER the bee has arrived
+                        }
+                        
+                        updateBeeBotInfo(); // Update info after each command
+                    }
+                } catch (err) {
+                    console.error("Error during command execution:", err);
+                    // Show a toast?
+                    showToast("An error occurred during execution.", 3000);
+                } finally {
+                    // This code will run NO MATTER WHAT, even if an error happens.
+                    // This guarantees the button is re-enabled.
+                    isExecuting = false;
+                    document.getElementById('go-btn').disabled = false;
+                }
+            }
+            
+            function saveLessonOffline() {
+                // Get the current lesson state from our app
+                const lessonConfig = {
+                    gameMode: gameMode,
+                    customBeeImageUrl: customBeeImageUrl,
+                    // Use the getter to get the *full* lesson data
+                    lessonData: lessonData
+                };
+                
+                // Convert the in-memory object to a JSON string
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(lessonConfig));
+                
+                // Create a temporary link to trigger the download
+                const downloadAnchor = document.createElement('a');
+                downloadAnchor.setAttribute("href", dataStr);
+                downloadAnchor.setAttribute("download", "beebot-lesson.json");
+                document.body.appendChild(downloadAnchor); // Required for Firefox
+                downloadAnchor.click();
+                downloadAnchor.remove();
+                showToast('Lesson downloaded for offline use!', 2000);
+            }
+            
+            // --- ADDED: Function to generate PDF for physical mat ---
+            async function generatePhysicalMatPDF() {
+                if (isStudentMode) {
+                    // alert("This feature is for teachers only."); // Avoid alert
+                    window.beebotApp.showToast("This feature is for teachers only.", 2000);
+                    return;
+                }
+                
+                showToast('Generating Physical Mat PDF... This may take a moment.', 5000);
+
+                // 1. Create PDF, set units to INCHES
+                const pdf = new jsPDF({
+                    orientation: 'portrait',
+                    unit: 'in',
+                    format: 'letter' // 8.5 x 11 inches
+                });
+
+                const pageWidth = 8.5;
+                const pageHeight = 11;
+                const margin = 0.5; // 0.5 inch margin
+                const tileWidth = 5; // A large, single-tile size
+                const tileHeight = 5;
+
+                // Calculate positions for two tiles per page
+                // Centered horizontally: (8.5 - 5) / 2 = 1.75
+                const xPos = (pageWidth - tileWidth) / 2; 
+                const yPosTop = margin; // 0.5" from top
+                const yPosBottom = margin + tileHeight + margin; // 0.5 + 5 + 0.5 = 6" from top
+
+                let tileIndex = 0; // Keep track of tiles with content
+
+                // 2. Loop through all slides and all tiles
+                for (let i = 0; i < lessonData.length; i++) {
+                    const slide = lessonData[i];
+                    const gridData = slide.gridData.flat(); // Flatten the 2D grid array
+
+                    for (const cellData of gridData) {
+                        if (cellData.type === 'empty') {
+                            continue; // Skip empty tiles
+                        }
+
+                        // --- Check if we need a new page ---
+                        let yPos;
+                        if (tileIndex % 2 === 0) { // 0th, 2nd, 4th tile...
+                            // This is the first tile on a new page (or the very first tile)
+                            if (tileIndex > 0) {
+                                pdf.addPage(); // Add a new page for every 2 tiles
+                            }
+                            yPos = yPosTop; // Place at top
+                        } else {
+                            // This is the second tile on the page
+                            yPos = yPosBottom; // Place at bottom
+                        }
+                        
+                        // 3. Draw a cutting guideline box
+                        pdf.setDrawColor(200, 200, 200); // Light grey
+                        pdf.setLineWidth(0.01);
+                        pdf.rect(xPos, yPos, tileWidth, tileHeight);
+
+                        // 4. Add the content
+                        if (cellData.type === 'image') {
+                            try {
+                                // Add the image, fitting it to the 5x5 box
+                                pdf.addImage(cellData.value, 'PNG', xPos, yPos, tileWidth, tileHeight);
+                            } catch (e) {
+                                console.error("Error adding image to PDF:", e);
+                                pdf.setFontSize(10);
+                                pdf.setTextColor(255, 0, 0); // Red
+                                pdf.text("Error loading image", xPos + 0.1, yPos + 0.1);
+                                pdf.setTextColor(0, 0, 0); // Reset color
+                            }
+                        } else if (cellData.type === 'text') {
+                            const text = cellData.value;
+                            const fontSize = cellData.fontSize || DEFAULT_FONT_SIZE;
+                            
+                            // jsPDF font size is in points (pt), not pixels.
+                            // Convert px to pt (approx px * 0.75 = pt)
+                            const fontSizeInPoints = fontSize * 0.75;
+                            pdf.setFontSize(fontSizeInPoints);
+                            pdf.setFont('helvetica', 'normal');
+                            
+                            // Split text to fit in the 5-inch width (with small margins)
+                            const textLines = pdf.splitTextToSize(text, tileWidth - (margin * 2)); // 4.5 inch width
+                            
+                            // Calculate vertical center
+                            // (fontSizeInPoints / 72) = height of one line in inches
+                            const textBlockHeight = (textLines.length * fontSizeInPoints) / 72;
+                            const textYCenter = yPos + (tileHeight / 2) - (textBlockHeight / 2);
+                            
+                            pdf.text(textLines, xPos + (tileWidth / 2), textYCenter, { 
+                                align: 'center',
+                                baseline: 'top'
+                            });
+                        }
+                        
+                        tileIndex++; // Increment *only* when we add a tile
+                    }
+                }
+                
+                // 5. Save the PDF
+                if (tileIndex === 0) {
+                    showToast('No content found on the mat to print.', 3000);
+                } else {
+                    pdf.save('beebot-physical-mat-tiles.pdf');
+                    showToast('Physical Mat PDF has been downloaded!', 3000);
+                }
+            }
+            
+            // --- AI Generation Functions (FIXED) ---
+            
+            async function generateAiImage() {
+                const prompt = aiPromptInput.value;
+                if (!prompt) {
+                    // alert("Please enter a prompt."); // Avoid alert
+                    window.beebotApp.showToast("Please enter a prompt.", 2000);
+                    return;
+                }
+                
+                const { row, col } = aiModalGenerate.dataset;
+                
+                aiModalLoader.classList.remove('hidden');
+                aiModalGenerate.disabled = true;
+                aiPromptInput.disabled = true;
+
+                try {
+                    // --- BYOK: Get the user's saved API key ---
+                    const { getApiKey } = window.firebaseServices;
+                    const userApiKey = await getApiKey();
+
+                    if (!userApiKey) {
+                        // alert("To generate AI images, please add your Google AI API key in the 'Settings' menu (top-right)."); // Avoid alert
+                        window.beebotApp.showToast("Add your Google AI API key in 'Settings'.", 3000);
+                        aiModal.classList.add('hidden'); // Close AI modal
+                        aiModalLoader.classList.add('hidden');
+                        aiModalGenerate.disabled = false;
+                        aiPromptInput.disabled = false;
+                        return; // Stop if no key
+                    }
+                    
+                    // --- GEMINI API CALL (imagen-3.0-generate-002) ---
+                    // --- BYOK: Use the user's API key ---
+                    const apiKey = userApiKey;
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+
+                    const payload = {
+                        instances: { prompt: prompt },
+                        parameters: { "sampleCount": 1 }
+                    };
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error("API Error Response:", errorBody);
+                        throw new Error(`Google API error: ${response.status} ${response.statusText}. Check your API key and prompt.`);
+                    }
+
+                    const result = await response.json();
+                    
+                    if (result.predictions && result.predictions.length > 0 && result.predictions[0].bytesBase64Encoded) {
+                        const imageUrl = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+                        
+                        // Save data to lesson
+                        const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                        cellData.type = 'image';
+                        cellData.value = imageUrl;
+                        cellData.fontSize = DEFAULT_FONT_SIZE;
+                        
+                        // Update UI
+                        const cell = gridContainer.querySelector(`.grid-cell[data-row='${row}'][data-col='${col}']`);
+                        if (cell) {
+                            // --- DRAG-N-DROP: Use new UI updater ---
+                            updateCellUI(cell, cellData);
+                        }
+                        aiModal.classList.add('hidden');
+                    } else {
+                        throw new Error("Invalid API response format or no image generated.");
+                    }
+                } catch (error) {
+                    console.error("AI Image Generation Error:", error);
+                    // alert(`Failed to generate image: ${error.message}. Check console for details.`); // Avoid alert
+                    window.beebotApp.showToast(`Failed to generate image: ${error.message}`, 5000);
+                } finally {
+                    aiModalLoader.classList.add('hidden');
+                    aiModalGenerate.disabled = false;
+                    aiPromptInput.disabled = false;
+                }
+            }
+            
+            // --- Student Mode Functionality ---
+            
+            // --- PHASE 3: Re-wired saveWorkBtn to handle submissions ---
+            saveWorkBtn.addEventListener('click', () => {
+                // Save the current command sequence to the local studentWork array first
+                studentWork[currentSlideIndex] = [...commands];
+                showToast(`Work saved for Slide ${currentSlideIndex + 1}!`, 2000);
+                
+                // Now, check if we need to ask for their name
+                if (!studentName) {
+                    studentNameModal.classList.remove('hidden');
+                    studentNameInput.focus();
+                } else {
+                    // We already have their name, just submit
+                    submitStudentWork();
+                }
+            });
+            
+            studentNameCancel.addEventListener('click', () => {
+                studentNameModal.classList.add('hidden');
+            });
+            
+            studentNameSubmit.addEventListener('click', () => {
+                const name = studentNameInput.value.trim();
+                if (name) {
+                    studentName = name;
+                    studentNameModal.classList.add('hidden');
+                    submitStudentWork(); // Now submit the work
+                } else {
+                    // alert("Please enter your name."); // Avoid alert
+                    window.beebotApp.showToast("Please enter your name.", 2000);
+                }
+            });
+
+            async function submitStudentWork() {
+                if (!isStudentMode || !currentStudentLessonId || !studentName) {
+                    console.error("Missing data for submission");
+                    return;
+                }
+                
+                showToast("Submitting your work...", 2000);
+                
+                const { db, appId, addDoc, collection, getAuth } = window.firebaseServices;
+                
+                try {
+                    // Get the current user's (anonymous) ID
+                    const auth = getAuth();
+                    const userId = auth.currentUser ? auth.currentUser.uid : null;
+                    
+                    if (!userId) {
+                        throw new Error("Could not get user ID for submission.");
+                    }
+                    
+                    const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
+                    
+                    // Save the *entire* studentWork array, stringified
+                    const docRef = await addDoc(collection(db, submissionsCollectionPath), {
+                        studentName: studentName,
+                        studentId: userId,
+                        lessonId: currentStudentLessonId, // Link to the public lesson
+                        work: JSON.stringify(studentWork), // Stringify the array of arrays
+                        submittedAt: new Date().toISOString()
+                    });
+                    
+                    console.log("Work submitted with ID:", docRef.id);
+                    showToast("Work submitted successfully!", 3000);
+                    
+                } catch (e) {
+                    console.error("Error submitting work:", e);
+                    // alert(`Error submitting work: ${e.message}`); // Avoid alert
+                    showToast("Error submitting work.", 3000);
+                }
+            }
+            
+            exportReportBtn.addEventListener('click', async () => {
+                showToast('Generating report... Please wait.', 5000);
+                
+                // Clear any old report
+                reportGenerator.innerHTML = '';
+                reportGenerator.classList.remove('hidden');
+                
+                // Create a PDF instance
+                const pdf = new jsPDF({
+                    orientation: 'portrait',
+                    unit: 'px',
+                    format: 'a4'
+                });
+                
+                const pageWidth = pdf.internal.pageSize.getWidth();
+                const pageHeight = pdf.internal.pageSize.getHeight();
+                const margin = 20;
+                const usableWidth = pageWidth - (margin * 2);
+                let yPos = margin;
+
+                // Add Title
+                pdf.setFontSize(22);
+                pdf.setFont('helvetica', 'bold');
+                pdf.text("Bee-Bot Lesson Report", pageWidth / 2, yPos, { align: 'center' });
+                yPos += 30;
+                
+                pdf.setFontSize(12);
+                pdf.setFont('helvetica', 'normal');
+                // --- PHASE 3: Use studentName in report ---
+                pdf.text(`Student: ${studentName || '(Student Name)'}`, margin, yPos);
+                pdf.text(`Date: ${new Date().toLocaleDateString()}`, pageWidth - margin, yPos, { align: 'right' });
+                yPos += 20;
+
+                for (let i = 0; i < lessonData.length; i++) {
+                    const slide = lessonData[i];
+                    const work = studentWork[i] || [];
+                    
+                    // --- Check for page break ---
+                    const sectionHeight = 250; // Estimated height for grid + commands
+                    if (yPos + sectionHeight > pageHeight - margin) {
+                        pdf.addPage();
+                        yPos = margin;
+                    }
+
+                    // --- Add Slide Title ---
+                    pdf.setFontSize(16);
+                    pdf.setFont('helvetica', 'bold');
+                    pdf.text(`Slide ${i + 1}: ${slide.instruction}`, margin, yPos);
+                    yPos += 20;
+                    
+                    // --- Prepare a temporary clone of the grid for this slide ---
+                    const tempGrid = document.createElement('div');
+                    tempGrid.id = 'temp-grid';
+                    tempGrid.style.width = '800px'; // Fixed high-res width
+                    tempGrid.style.height = '800px';
+                    tempGrid.style.position = 'absolute';
+                    tempGrid.style.left = '-9999px'; // Move off-screen
+                    reportGenerator.appendChild(tempGrid);
+                    
+                    // Build the grid cells
+                    tempGrid.style.display = 'grid';
+                    tempGrid.style.gridTemplateRows = `repeat(${slide.gridRows}, 1fr)`;
+                    tempGrid.style.gridTemplateColumns = `repeat(${slide.gridCols}, 1fr)`;
+                    tempGrid.style.border = '2px solid #333';
+                    
+                    slide.gridData.flat().forEach(cellData => {
+                        const cell = document.createElement('div');
+                        cell.className = 'grid-cell';
+                        cell.style.border = '1px solid #ccc';
+                        cell.style.width = `${800 / slide.gridCols}px`;
+                        cell.style.height = `${800 / slide.gridRows}px`;
+                        
+                        if (cellData.type === 'image') {
+                            const img = document.createElement('img');
+                            img.src = cellData.value;
+                            img.style.width = '100%';
+                            img.style.height = '100%';
+                            img.style.objectFit = 'cover';
+                            cell.appendChild(img);
+                        } else if (cellData.type === 'text') {
+                            cell.textContent = cellData.value;
+                            // ADDED: Apply font size for PDF
+                            cell.style.fontSize = `${cellData.fontSize || DEFAULT_FONT_SIZE}px`;
+                            cell.style.display = 'flex';
+                            cell.style.alignItems = 'center';
+                            cell.style.justifyContent = 'center';
+                            cell.style.wordBreak = 'break-word';
+                        }
+                        tempGrid.appendChild(cell);
+                    });
+
+                    // Add the path to the temporary grid
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = 800;
+                    tempCanvas.height = 800;
+                    tempCanvas.style.position = 'absolute';
+                    tempCanvas.style.top = '0';
+                    tempCanvas.style.left = '0';
+                    tempGrid.appendChild(tempCanvas);
+                    
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.strokeStyle = pathColorPicker.value;
+                    tempCtx.lineWidth = 5;
+                    tempCtx.lineCap = 'round';
+                    tempCtx.lineJoin = 'round';
+                    
+                    // --- Draw path based on student work ---
+                    let pathSimState = { ...slide.initialBeebotState };
+                    const cellW = 800 / slide.gridCols;
+                    const cellH = 800 / slide.gridRows;
+                    
+                    tempCtx.beginPath();
+                    tempCtx.moveTo(pathSimState.col * cellW + cellW / 2, pathSimState.row * cellH + cellH / 2);
+                    
+                    for (const cmd of work) {
+                        if (cmd === 'F') {
+                            let newRow = pathSimState.row;
+                            let newCol = pathSimState.col;
+                            if (pathSimState.dir === 0) newRow--;
+                            if (pathSimState.dir === 1) newCol++;
+                            if (pathSimState.dir === 2) newRow++;
+                            if (pathSimState.dir === 3) newCol--;
+                            
+                            if (newRow >= 0 && newRow < slide.gridRows && newCol >= 0 && newCol < slide.gridCols) {
+                                pathSimState.row = newRow;
+                                pathSimState.col = newCol;
+                                tempCtx.lineTo(pathSimState.col * cellW + cellW / 2, pathSimState.row * cellH + cellH / 2);
+                            }
+                        } else if (cmd === 'L') {
+                            pathSimState.dir = (pathSimState.dir + 3) % 4;
+                        } else if (cmd === 'R') {
+                            pathSimState.dir = (pathSimState.dir + 1) % 4;
+                        }
+                    }
+                    tempCtx.stroke();
+                    
+                    // --- Add Grid Image to PDF ---
+                    try {
+                        const canvas = await html2canvas(tempGrid, { useCORS: true, scale: 1 });
+                        const imgData = canvas.toDataURL('image/png');
+                        
+                        const imgSize = usableWidth * 0.6; // Use 60% of width for grid
+                        pdf.addImage(imgData, 'PNG', margin, yPos, imgSize, imgSize);
+                        
+                        // --- Add Commands List ---
+                        const commandsX = margin + imgSize + 15;
+                        const commandsWidth = usableWidth - imgSize - 15;
+                        pdf.setFontSize(10);
+                        pdf.setFont('helvetica', 'bold');
+                        pdf.text('Commands Used:', commandsX, yPos);
+                        yPos += 12;
+                        
+                        pdf.setFont('helvetica', 'normal');
+                        if (work.length > 0) {
+                            const cmdStr = work.join(', ');
+                            const splitCmds = pdf.splitTextToSize(cmdStr, commandsWidth);
+                            pdf.text(splitCmds, commandsX, yPos);
+                            yPos += (splitCmds.length * 10);
+                        } else {
+                            pdf.text('No commands saved.', commandsX, yPos);
+                            yPos += 10;
+                        }
+
+                        // Set yPos to be after the grid image
+                        yPos = margin + imgSize + 20;
+
+                    } catch (e) {
+                        console.error("html2canvas error:", e);
+                        pdf.setFont('helvetica', 'normal');
+                        pdf.text('Error generating grid image.', margin, yPos, { color: 'red' });
+                        yPos += 20;
+                    }
+                    
+                    // Clean up temp grid
+                    reportGenerator.innerHTML = '';
+                    
+                    yPos += 10; // Extra padding
+                }
+
+                // --- Save PDF ---
+                pdf.save('beebot-report.pdf');
+                reportGenerator.classList.add('hidden');
+                
+            });
+
+            
+            // --- Path Drawing ---
+            
+            function resizeCanvasAndPath() {
+                const rect = gridContainer.getBoundingClientRect();
+                pathCanvas.width = rect.width;
+                pathCanvas.height = rect.height;
+                updateBeebotPosition();
+                redrawFullPath();
+            }
+
+            function updateBeebotPosition(pos = beebotState) {
+                if (!gridContainer.offsetWidth || !gridContainer.offsetHeight) return;
+
+                const cellWidth = gridContainer.offsetWidth / gridCols;
+                const cellHeight = gridContainer.offsetHeight / gridRows;
+
+                beebot.style.width = `${cellWidth}px`;
+                beebot.style.height = `${cellHeight}px`;
+                beebot.style.top = `${pos.row * cellHeight}px`;
+                beebot.style.left = `${pos.col * cellWidth}px`;
+                
+                /* --- ADDED: Visual Rotation Logic --- */
+                /* EDITED: This formula is now correct for a right-facing asset! */
+                /* 0=Up(-90), 1=Right(0), 2=Down(90), 3=Left(180) */
+                const visualRotation = (pos.dir * 90) - 90;
+                beebot.style.transform = `rotate(${visualRotation}deg)`;
+            }
+            
+            // ADDED: New function to update the position and direction display
+            function updateBeeBotInfo() {
+                // Convert 0-indexed internal state to 1-indexed, user-friendly display
+                posRowInput.value = gridRows - beebotState.row;
+                posColInput.value = beebotState.col + 1;
+                dirSelectInput.value = beebotState.dir;
+            }
+
+            function redrawFullPath() {
+                pathCtx.clearRect(0, 0, pathCanvas.width, pathCanvas.height);
+                if (pathHistory.length < 1) return;
+
+                const cellWidth = pathCanvas.width / gridCols;
+                const cellHeight = pathCanvas.height / gridRows;
+
+                pathCtx.strokeStyle = pathColorPicker.value;
+                pathCtx.lineWidth = Math.max(5, cellWidth * 0.1); // Responsive line width
+                pathCtx.lineCap = 'round';
+                pathCtx.lineJoin = 'round';
+
+                const startPos = pathHistory[0];
+                pathCtx.beginPath();
+                pathCtx.moveTo(startPos.col * cellWidth + cellWidth / 2, startPos.row * cellHeight + cellHeight / 2);
+                
+                // Draw line segments
+                for (let i = 1; i < pathHistory.length; i++) {
+                    const pos = pathHistory[i];
+                    pathCtx.lineTo(pos.col * cellWidth + cellWidth / 2, pos.row * cellHeight + cellHeight / 2);
+                }
+                pathCtx.stroke();
+                
+                // Draw start point
+                pathCtx.fillStyle = 'green';
+                pathCtx.beginPath();
+                pathCtx.arc(startPos.col * cellWidth + cellWidth / 2, startPos.row * cellHeight + cellHeight / 2, pathCtx.lineWidth, 0, 2 * Math.PI);
+                pathCtx.fill();
+                
+                // Draw end point
+                if (pathHistory.length > 1) {
+                    const endPos = pathHistory[pathHistory.length - 1];
+                    pathCtx.fillStyle = pathColorPicker.value;
+                    pathCtx.beginPath();
+                    pathCtx.arc(endPos.col * cellWidth + cellWidth / 2, endPos.row * cellHeight + cellHeight / 2, pathCtx.lineWidth, 0, 2 * Math.PI);
+                    pathCtx.fill();
+                }
+            }
+            
+            // --- ADDED: Font Size Change Function ---
+            function changeFontSize(direction) {
+                if (!selectedCell) return; // Only work if a cell is selected
+
+                const row = selectedCell.dataset.row;
+                const col = selectedCell.dataset.col;
+                const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                
+                let currentSize = cellData.fontSize || DEFAULT_FONT_SIZE;
+                
+                if (direction === 'up') {
+                    currentSize = Math.min(currentSize + FONT_STEP, MAX_FONT_SIZE);
+                } else {
+                    currentSize = Math.max(currentSize - FONT_STEP, MIN_FONT_SIZE);
+                }
+                
+                // 1. Update the data object in real-time
+                cellData.fontSize = currentSize;
+                
+                // 2. Update the span in the controls
+                currentFontSizeSpan.textContent = currentSize;
+                
+                // 3. Update the UI in real-time
+                let textDiv = selectedCell.querySelector('.cell-text');
+                if (!textDiv) { // If setting font size on an empty cell, create the div
+                    selectedCell.innerHTML = '';
+                    textDiv = document.createElement('div');
+                    textDiv.className = 'cell-text';
+                    selectedCell.appendChild(textDiv);
+                }
+                textDiv.style.fontSize = `${currentSize}px`;
+            }
+
+            // --- Event Listeners ---
+            startImageBtn.addEventListener('click', () => startGame('image'));
+            startTextBtn.addEventListener('click', () => startGame('text'));
+            startAiBtn.addEventListener('click', () => startGame('ai'));
+            startUnboxBtn.addEventListener('click', () => startGame('unbox')); // --- ADDED: UNBOX Listener ---
+            
+            newGameBtn.addEventListener('click', () => {
+                // Simple page reload to go home
+                window.location.reload();
+            });
+            
+            slideControls.prev.addEventListener('click', () => loadSlide(currentSlideIndex - 1));
+            slideControls.next.addEventListener('click', () => loadSlide(currentSlideIndex + 1));
+            
+            // --- EDITED: "Add Slide" now DUPLICATES the current slide ---
+            slideControls.add.addEventListener('click', () => {
+                // Get the current slide
+                const currentSlide = lessonData[currentSlideIndex];
+                
+                // Create a DEEP COPY of the current slide
+                // This copies the gridData, settings, everything.
+                const newSlide = JSON.parse(JSON.stringify(currentSlide));
+                
+                // Give the new slide its own unique ID
+                newSlide.id = crypto.randomUUID();
+                
+                // Insert the new slide *after* the current one
+                lessonData.splice(currentSlideIndex + 1, 0, newSlide);
+                
+                if (isStudentMode) {
+                    // Also insert a blank command list for the new slide
+                    studentWork.splice(currentSlideIndex + 1, 0, []);
+                }
+                
+                // Load the newly created slide
+                loadSlide(currentSlideIndex + 1);
+            });
+            
+            slideControls.delete.addEventListener('click', () => {
+                if (lessonData.length > 1) {
+                    lessonData.splice(currentSlideIndex, 1);
+                    if (isStudentMode) {
+                        studentWork.splice(currentSlideIndex, 1);
+                    }
+                    // If we deleted the last slide, go to the new last slide
+                    if (currentSlideIndex >= lessonData.length) {
+                        currentSlideIndex = lessonData.length - 1;
+                    }
+                    loadSlide(currentSlideIndex);
+                }
+            });
+            
+            setTextBtn.addEventListener('click', () => {
+                if (selectedCell) {
+                    const row = selectedCell.dataset.row;
+                    const col = selectedCell.dataset.col;
+                    const text = tileTextInput.value;
+                    // ADDED: Get current font size from span
+                    const currentSize = parseInt(currentFontSizeSpan.textContent, 10);
+                    
+                    // --- DRAG-N-DROP: Get cellData ---
+                    const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                    cellData.type = 'text';
+                    cellData.value = text;
+                    cellData.fontSize = currentSize; // Save the font size
+                    
+                    // --- DRAG-N-DROP: Use new UI updater ---
+                    updateCellUI(selectedCell, cellData);
+                }
+            });
+            
+            // FIXED: Converted HTML comment to JS comment
+            // ADDED: Event listener for Clear Tile button
+            clearTileBtn.addEventListener('click', () => {
+                if (selectedCell) {
+                    const row = selectedCell.dataset.row;
+                    const col = selectedCell.dataset.col;
+                    
+                    // 1. Update the data
+                    // --- DRAG-N-DROP: Get cellData ---
+                    const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                    cellData.type = 'empty';
+                    cellData.value = '';
+                    cellData.fontSize = DEFAULT_FONT_SIZE; // ADDED: Reset font size
+                    
+                    // 2. Update the UI
+                    // --- DRAG-N-DROP: Use new UI updater ---
+                    updateCellUI(selectedCell, cellData);
+                    
+                    // 3. Deselect and hide controls
+                    selectedCell.classList.remove('selected');
+                    selectedCell = null;
+                    textEditControls.classList.add('hidden');
+                    tileEditControls.classList.add('hidden');
+                    
+                    showToast('Tile cleared!', 1500);
+                }
+            });
+            
+            // ADDED: Listeners for font size buttons
+            fontSizeUpBtn.addEventListener('click', () => changeFontSize('up'));
+            fontSizeDownBtn.addEventListener('click', () => changeFontSize('down'));
+            
+            // --- ADDED: UNBOX Modal Listeners ---
+            choiceCancelBtn.addEventListener('click', () => {
+                tileChoiceModal.classList.add('hidden');
+                // Deselect the cell
+                if (selectedCell) {
+                    selectedCell.classList.remove('selected');
+                    selectedCell = null;
+                }
+                tileEditControls.classList.add('hidden');
+            });
+
+            choiceImageBtn.addEventListener('click', () => {
+                const { row, col } = tileChoiceModal.dataset;
+                tileChoiceModal.classList.add('hidden');
+                openImageUploader(row, col); // Use the helper function
+            });
+            
+            choiceTextBtn.addEventListener('click', () => {
+                const { row, col } = tileChoiceModal.dataset;
+                tileChoiceModal.classList.add('hidden');
+                openTextEditor(row, col); // Use the helper function
+            });
+            
+            choiceAIBtn.addEventListener('click', () => {
+                const { row, col } = tileChoiceModal.dataset;
+                tileChoiceModal.classList.add('hidden');
+                openAIModal(row, col); // Use the helper function
+            });
+            // --- End of UNBOX Listeners ---
+            
+            
+            instructionInput.addEventListener('change', () => {
+                if (!isStudentMode) {
+                    lessonData[currentSlideIndex].instruction = instructionInput.value;
+                    showToast('Instruction updated!', 1500);
+                }
+            });
+
+            // EDITED: Changed to downloadOfflineBtn
+            downloadOfflineBtn.addEventListener('click', saveLessonOffline);
+            
+            // --- ADDED: Listener for new Print Mat button ---
+            printPhysicalMatBtn.addEventListener('click', generatePhysicalMatPDF);
+            
+            aiModalCancel.addEventListener('click', () => aiModal.classList.add('hidden'));
+            aiModalGenerate.addEventListener('click', generateAiImage);
+
+            document.getElementById('forward-btn').addEventListener('click', () => addCommand('F'));
+            document.getElementById('left-btn').addEventListener('click', () => addCommand('L'));
+            document.getElementById('right-btn').addEventListener('click', () => addCommand('R'));
+            // ADDED: Listener for new backward button
+            document.getElementById('backward-btn').addEventListener('click', () => addCommand('B'));
+            // REMOVED: Listener for pause button
+            document.getElementById('go-btn').addEventListener('click', executeCommands);
+            document.getElementById('clear-btn').addEventListener('click', () => {
+                commands = [];
+                updateCommandSequence();
+            });
+            document.getElementById('stop-btn').addEventListener('click', stopExecution);
+            
+            pathColorPicker.addEventListener('input', (e) => {
+                redrawFullPath();
+            });
+            
+            // ADDED: Event listener for the new "Set Position" button
+            setPosBtn.addEventListener('click', () => {
+                if (isStudentMode) return; // Button should be hidden, but as a safeguard
+
+                let newUIRow = parseInt(posRowInput.value, 10);
+                let newUICol = parseInt(posColInput.value, 10);
+                let newDir = parseInt(dirSelectInput.value, 10);
+
+                // Validation
+                if (isNaN(newUIRow) || newUIRow < 1 || newUIRow > gridRows) {
+                    showToast(`Invalid Row. Must be between 1 and ${gridRows}.`, 3000);
+                    updateBeeBotInfo(); // Reset to valid state
+                    return;
+                }
+                if (isNaN(newUICol) || newUICol < 1 || newUICol > gridCols) {
+                    showToast(`Invalid Column. Must be between 1 and ${gridCols}.`, 3000);
+                    updateBeeBotInfo(); // Reset to valid state
+                    return;
+                }
+
+                // Convert user-facing (1-indexed) values to internal (0-indexed) state
+                const newInternalRow = gridRows - newUIRow;
+                const newInternalCol = newUICol - 1;
+
+                // Update the main beebot state
+                beebotState = {
+                    row: newInternalRow,
+                    col: newInternalCol,
+                    dir: newDir,
+                };
+
+                // CRITICAL: Update the slide's initial state so this change is saved
+                lessonData[currentSlideIndex].initialBeebotState = { ...beebotState };
+
+                // Reset any existing execution/path and apply the new new position
+                stopExecution(); // This will read the new initial state and update the display
+
+                showToast('Bee-Bot start position updated for this slide!');
+            });
+            
+            window.addEventListener('resize', resizeCanvasAndPath);
+
+            // --- Auto-start if config exists ---
+            if (window.beebotGameConfig) {
+                homePage.classList.add('hidden');
+                gamePage.classList.remove('hidden');
+                gamePage.classList.add('flex');
+                loadStudentLesson(window.beebotGameConfig); // Use the student loader
+            }
+            
+            // --- PUBLIC API for Firebase script ---
+            // These functions can be called by the Firebase script in the <head>
+            return {
+                showToast: showToast,
+                loadSavedLesson: loadSavedLesson,
+                getLessonData: () => lessonData,
+                getGameMode: () => gameMode,
+                getCustomBeeImage: () => customBeeImageUrl
+            };
+
+        })(); // End of beebotApp object
+        
+        // This is the main script file.
+        // It's now inside a DOMContentLoaded listener
+        // (Note: The original file had this listener, so we keep it)
+        document.addEventListener('DOMContentLoaded', () => {
+            // The main app logic is already running and attached to window.beebotApp
+            // The Firebase logic in the <head> is also already running.
+            // We can add any *additional* setup here if needed,
+            // but for now, everything is initialized.
+            console.log("BeeBot App Initialized.");
+        });
+    </script>
+</body>
+</html>
+
+
