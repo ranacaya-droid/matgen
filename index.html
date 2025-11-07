@@ -12,18 +12,85 @@
         FIREBASE SDKs and INITIALIZATION
         NOTE: The Firebase configuration, app_id, and initial_auth_token are provided
         by the environment as global variables: __app_id, __firebase_config, and __initial_auth_token.
-        The initialization logic below correctly uses these environment variables.
     -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, addDoc, collection, query, getDocs, deleteDoc, onSnapshot, setLogLevel, getDoc, updateDoc, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // CRITICAL FIX: All DOM manipulation MUST be inside DOMContentLoaded
         document.addEventListener('DOMContentLoaded', () => {
 
-            // --- FIREBASE CONFIG (ADDED) ---
-// These are YOUR private keys from your new Firebase project
-const firebaseConfig = {
+            // --- NEW HELPER FUNCTION: Image Resizing ---
+            /**
+             * Resizes a base64 image to a max width/height to save storage space.
+             * @param {string} dataUrl The base64 data URL of the image.
+             * @param {number} maxWidth The maximum width for the new image (e.g., 256).
+             * @param {number} maxHeight The maximum height for the new image (e.g., 256).
+             * @param {number} quality The JPEG quality (0.0 to 1.0, e.g., 0.7).
+             * @returns {Promise<string>} A promise that resolves with the new, smaller base64 data URL.
+             */
+            function resizeImage(dataUrl, maxWidth = 256, maxHeight = 256, quality = 0.7) {
+                return new Promise((resolve, reject) => {
+                    // Check if it's a base64 image
+                    if (!dataUrl || !dataUrl.startsWith('data:image')) {
+                        // It's not an image we can process (e.g., already a URL, empty, or invalid), so just return it.
+                        resolve(dataUrl);
+                        return;
+                    }
+
+                    const img = new Image();
+                    img.src = dataUrl;
+
+                    img.onload = () => {
+                        let width = img.width;
+                        let height = img.height;
+
+                        // Don't resize if it's already small
+                        if (width <= maxWidth && height <= maxHeight) {
+                            resolve(dataUrl); // Return original if already small enough
+                            return;
+                        }
+
+                        // Calculate new dimensions, maintaining aspect ratio
+                        if (width > height) {
+                            if (width > maxWidth) {
+                                height = Math.round((height * maxWidth) / width);
+                                width = maxWidth;
+                            }
+                        } else {
+                            if (height > maxHeight) {
+                                width = Math.round((width * maxHeight) / height);
+                                height = maxHeight;
+                            }
+                        }
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Draw the image onto the canvas
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // Get the new base64 string
+                        // Using image/jpeg for significant size reduction, even for PNGs.
+                        const newDataUrl = canvas.toDataURL('image/jpeg', quality);
+                        resolve(newDataUrl);
+                    };
+
+                    img.onerror = (error) => {
+                        console.error("Error loading image for resizing:", error);
+                        // Return the original URL on error
+                        resolve(dataUrl); 
+                    };
+                });
+            }
+            // --- END HELPER FUNCTION ---
+
+
+            // --- ENVIRONMENT VARIABLES (MANDATORY USE) ---
+            const firebaseConfig = {
   apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
   authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
   projectId: "unboxing-ct--mat-generator",
@@ -41,7 +108,7 @@ let app, auth, db;
 let currentUserId = null;
 let lessonCache = [];
 
-            // Get references to new auth buttons (Ensured inside DOMContentLoaded)
+            // --- GET DOM REFERENCES HERE (AFTER DOMContentLoaded) ---
             const loginBtn = document.getElementById('login-btn');
             const logoutBtn = document.getElementById('logout-btn-home');
             const logoutBtnGame = document.getElementById('logout-btn-game');
@@ -73,7 +140,6 @@ let lessonCache = [];
             const viewWorkContent = document.getElementById('view-work-content');
             
             // --- VIZ FIX: New elements for modal slide controls ---
-            const viewWorkSlideControls = document.getElementById('view-work-slide-controls');
             const viewWorkPrevSlide = document.getElementById('view-work-prev-slide');
             const viewWorkNextSlide = document.getElementById('view-work-next-slide');
             const viewWorkSlideCounter = document.getElementById('view-work-slide-counter');
@@ -90,6 +156,110 @@ let lessonCache = [];
             const closeSettingsModalBtn = document.getElementById('close-settings-modal');
             const apiKeyInput = document.getElementById('api-key-input');
             const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+            
+            // --- NEW: Text Edit Modal Elements ---
+            const textEditModal = document.getElementById('text-edit-modal');
+            const textModalInput = document.getElementById('text-modal-input');
+            const textModalCancelBtn = document.getElementById('text-modal-cancel');
+            const textModalSaveBtn = document.getElementById('text-modal-save');
+            const textModalSizeDown = document.getElementById('text-modal-size-down');
+            const textModalSizeUp = document.getElementById('text-modal-size-up');
+            const textModalCurrentSize = document.getElementById('text-modal-current-size');
+            
+            // --- NEW: Position Modal Elements ---
+            const setPosModal = document.getElementById('set-pos-modal');
+            const setPosModalCancel = document.getElementById('set-pos-modal-cancel');
+            const setPosModalSave = document.getElementById('set-pos-modal-save');
+            
+            // --- NEW: Tutorial Modal Elements ---
+            const tutorialBtn = document.getElementById('tutorial-btn');
+            const tutorialModal = document.getElementById('tutorial-modal');
+            const closeTutorialModalBtn = document.getElementById('close-tutorial-modal');
+            const closeTutorialModalFooterBtn = document.getElementById('close-tutorial-modal-footer');
+            
+            // --- GALLERY PROMPT ELEMENTS ---
+            const galleryPrompt = document.getElementById('gallery-prompt');
+
+
+            // --- UI Helper Functions (Defined inside DOMContentLoaded scope) ---
+
+            function handleAuthError(error) {
+                console.error("Auth Sign-In Error:", error);
+            }
+
+            function showLoggedInUI(user) {
+                loginBtn.classList.add('hidden');
+                logoutBtn.classList.remove('hidden');
+                myLessonsBtn.classList.remove('hidden');
+                logoutBtnGame.classList.remove('hidden');
+                saveLessonBtn.classList.remove('hidden');
+                settingsBtn.classList.remove('hidden');
+                settingsBtnGame.classList.remove('hidden');
+            }
+
+            function showLoggedOutUI() {
+                loginBtn.classList.remove('hidden');
+                logoutBtn.classList.add('hidden');
+                myLessonsBtn.classList.add('hidden');
+                logoutBtnGame.classList.add('hidden');
+                saveLessonBtn.classList.add('hidden');
+                myLessonsList.innerHTML = '<p class="text-gray-500">Log in to see your saved lessons.</p>';
+                settingsBtn.classList.add('hidden');
+                settingsBtnGame.classList.add('hidden');
+            }
+
+            // Helper to load all slides for a given lesson
+            async function loadLessonSlides(lessonDocRef) {
+                const slidesCollectionPath = `${lessonDocRef.path}/slides`;
+                const q = query(collection(db, slidesCollectionPath));
+                const querySnapshot = await getDocs(q);
+
+                const slidesArray = [];
+                querySnapshot.forEach((slideDoc) => {
+                    const slide = slideDoc.data();
+                    slide.id = slideDoc.id;
+                    // VITAL: Re-parse the nested JSON strings
+                    if (typeof slide.gridData === 'string') {
+                        slide.gridData = JSON.parse(slide.gridData);
+                    }
+                    if (typeof slide.initialBeebotState === 'string') {
+                        slide.initialBeebotState = JSON.parse(slide.initialBeebotState);
+                    }
+                    
+                    // Reconstruct the lesson object structure expected by the app
+                    slidesArray.push({
+                        id: slide.id, // e.g., 'slide-0'
+                        instruction: slide.instruction,
+                        initialBeebotState: slide.initialBeebotState,
+                        gridRows: slide.gridRows,
+                        gridCols: slide.gridCols,
+                        gridData: slide.gridData
+                    });
+                });
+                
+                // Sort slides by ID (e.g., 'slide-0', 'slide-1') to maintain order
+                slidesArray.sort((a, b) => {
+                    const aIndex = parseInt(a.id.split('-')[1], 10);
+                    const bIndex = parseInt(b.id.split('-')[1], 10);
+                    return aIndex - bIndex;
+                });
+
+                return slidesArray;
+            }
+
+            // Helper to delete a subcollection
+            async function deleteCollection(collectionRef) {
+                const q = query(collectionRef);
+                const snapshot = await getDocs(q);
+                
+                if (snapshot.size === 0) return;
+
+                const deletePromises = [];
+                snapshot.forEach(doc => {
+                    deletePromises.push(deleteDoc(doc.ref));
+                });
+                await Promise.all(deletePromises);
+            }
 
 
             // --- FIREBASE INITIALIZATION ---
@@ -101,7 +271,7 @@ let lessonCache = [];
                 setLogLevel('Debug');
 
                 // Make services available to the main app script
-                window.firebaseServices = { db, appId, getDoc, doc, addDoc, collection, getAuth, getApiKey };
+                window.firebaseServices = { db, appId, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides };
 
                 // --- FIREBASE AUTHENTICATION (The "Bouncer") ---
                 onAuthStateChanged(auth, (user) => {
@@ -134,55 +304,8 @@ let lessonCache = [];
                     updateGalleryButtonState();
                 });
 
-                function handleAuthError(error) {
-                    console.error("Auth Sign-In Error:", error);
-                }
 
-                // --- AUTH UI FUNCTIONS ---
-                function showLoggedInUI(user) {
-                    loginBtn.classList.add('hidden');
-                    logoutBtn.classList.remove('hidden');
-                    myLessonsBtn.classList.remove('hidden');
-                    logoutBtnGame.classList.remove('hidden');
-                    saveLessonBtn.classList.remove('hidden');
-                    settingsBtn.classList.remove('hidden');
-                    settingsBtnGame.classList.remove('hidden');
-                }
-
-                function showLoggedOutUI() {
-                    loginBtn.classList.remove('hidden');
-                    logoutBtn.classList.add('hidden');
-                    myLessonsBtn.classList.add('hidden');
-                    logoutBtnGame.classList.add('hidden');
-                    saveLessonBtn.classList.add('hidden');
-                    myLessonsList.innerHTML = '<p class="text-gray-500">Log in to see your saved lessons.</p>';
-                    settingsBtn.classList.add('hidden');
-                    settingsBtnGame.classList.add('hidden');
-                }
-
-                // --- AUTH EVENT HANDLERS ---
-                loginBtn.addEventListener('click', async () => {
-                    const provider = new GoogleAuthProvider();
-                    try {
-                        await signInWithPopup(auth, provider);
-                    } catch (error) {
-                        console.error("Login Error:", error);
-                        window.beebotApp.showToast(`Login failed: ${error.message}`, 3000);
-                    }
-                });
-
-                const handleLogout = async () => {
-                    try {
-                        await signOut(auth);
-                        window.location.reload();
-                    } catch (error) {
-                        console.error("Logout Error:", error);
-                    }
-                };
-                logoutBtn.addEventListener('click', handleLogout);
-                logoutBtnGame.addEventListener('click', handleLogout);
-
-                // --- FIRESTORE DATABASE (The "Pantry") ---
+                // --- FIRESTORE DATABASE FUNCTIONS ---
 
                 // 1. LOAD all lessons for the logged-in teacher (Real-Time)
                 function loadUserLessons(userId) {
@@ -205,7 +328,8 @@ let lessonCache = [];
                         querySnapshot.forEach((doc) => {
                             const lesson = doc.data();
                             lesson.id = doc.id;
-                            lessonCache.push(lesson);
+                            // VITAL: Lesson now only contains metadata (no large config field)
+                            lessonCache.push(lesson); 
 
                             const lessonEl = document.createElement('div');
                             lessonEl.className = "flex justify-between items-center p-3 bg-gray-100 rounded-lg";
@@ -280,33 +404,72 @@ let lessonCache = [];
                     });
                 }
 
-                // 2. SAVE the current lesson
+                // 2. SAVE the current lesson (CRITICAL FIX: Uses subcollection)
                 async function saveLessonToFirestore(lessonName) {
                     if (!currentUserId) {
                         window.beebotApp.showToast("You must be logged in to save a lesson.", 3000);
                         return;
                     }
 
-                    // Get the current lesson state from our app
-                    const lessonConfig = {
-                        gameMode: window.beebotApp.getGameMode(),
-                        customBeeImageUrl: window.beebotApp.getCustomBeeImage(),
-                        lessonData: JSON.stringify(window.beebotApp.getLessonData()) // Stringify nested lessonData
-                    };
-
-                    // VITAL: Stringify the entire config object to avoid "invalid nested entity" error
-                    const configString = JSON.stringify(lessonConfig);
-
+                    const lessonData = window.beebotApp.getLessonData();
                     const lessonsCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
 
+                    // --- IMAGE COMPRESSION STEP ---
+                    // Create a deep copy to avoid modifying the in-memory lesson
+                    const lessonDataToSave = JSON.parse(JSON.stringify(lessonData));
+                    
                     try {
+                        console.log("Starting image compression before save...");
+                        // Process all images in the copied data
+                        for (const slide of lessonDataToSave) {
+                            if (slide.gridData) { // Ensure gridData exists
+                                for (let r = 0; r < slide.gridData.length; r++) {
+                                    for (let c = 0; c < slide.gridData[r].length; c++) {
+                                        const cellData = slide.gridData[r][c];
+                                        // Check for image type and if value is a base64 string
+                                        if (cellData.type === 'image' && cellData.value && cellData.value.startsWith('data:image')) {
+                                            // Resize the image. Using 256x256 and 70% quality.
+                                            cellData.value = await resizeImage(cellData.value, 256, 256, 0.7);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        console.log("Image compression finished.");
+                        // --- END IMAGE COMPRESSION STEP ---
+
+                        // --- 1. Create the main lesson metadata document ---
                         const docRef = await addDoc(collection(db, lessonsCollectionPath), {
                             name: lessonName,
-                            config: configString,
+                            gameMode: window.beebotApp.getGameMode(),
+                            customBeeImageUrl: window.beebotApp.getCustomBeeImage(),
+                            slideCount: lessonDataToSave.length, // Use the processed data
                             createdAt: new Date().toISOString(),
                             isPublic: false,
                             sharedLessonId: null
                         });
+
+                        // --- 2. Save each slide to the subcollection ---
+                        // **MODIFIED**: Use the compressed 'lessonDataToSave'
+                        const slidePromises = lessonDataToSave.map((slide, index) => {
+                            // Use deterministic slide IDs for predictable loading
+                            const slideDocRef = doc(db, `${lessonsCollectionPath}/${docRef.id}/slides`, `slide-${index}`);
+                            
+                            // Prepare slide data for saving (stringify complex objects to avoid firestore internal errors)
+                            const slideDataToSave = {
+                                instruction: slide.instruction,
+                                gridRows: slide.gridRows,
+                                gridCols: slide.gridCols,
+                                gridData: JSON.stringify(slide.gridData), 
+                                initialBeebotState: JSON.stringify(slide.initialBeebotState),
+                                index: index
+                            };
+
+                            return setDoc(slideDocRef, slideDataToSave);
+                        });
+
+                        await Promise.all(slidePromises);
+
                         console.log("Lesson saved with ID: ", docRef.id);
                         window.beebotApp.showToast("Lesson saved online!");
                         saveLessonModal.classList.add('hidden');
@@ -316,7 +479,7 @@ let lessonCache = [];
                     }
                 }
 
-                // 3. SHARE a lesson
+                // 3. SHARE a lesson (CRITICAL FIX: Copies metadata and slides subcollection)
                 async function shareLesson(lessonId) {
                     if (!currentUserId) {
                         window.beebotApp.showToast("You must be logged in to share a lesson.", 3000);
@@ -340,19 +503,34 @@ let lessonCache = [];
                     }
 
                     const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
+                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
 
                     try {
-                        // Add a copy of the lesson config to the public collection
+                        // --- 1. Create public lesson metadata ---
                         const docRef = await addDoc(collection(db, publicCollectionPath), {
-                            config: lesson.config,
+                            gameMode: lesson.gameMode,
+                            customBeeImageUrl: lesson.customBeeImageUrl || null,
+                            slideCount: lesson.slideCount,
                             teacherId: currentUserId,
                             originalName: lesson.name,
                             sharedAt: new Date().toISOString(),
                             isPublic: false
                         });
+                        
+                        // --- 2. Copy all slides to the public subcollection ---
+                        const privateSlidesRef = collection(db, `${privateLessonRef.path}/slides`);
+                        const publicSlidesCollectionRef = collection(db, `${docRef.path}/slides`);
+                        const privateSlides = await getDocs(privateSlidesRef);
+                        
+                        const copyPromises = [];
+                        privateSlides.forEach(slideDoc => {
+                            // Use the same slide ID in the public subcollection
+                            const publicSlideRef = doc(publicSlidesCollectionRef, slideDoc.id);
+                            copyPromises.push(setDoc(publicSlideRef, slideDoc.data()));
+                        });
+                        await Promise.all(copyPromises);
 
-                        // Link the new public/shared ID back to the teacher's private lesson
-                        const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                        // --- 3. Link the new public/shared ID back to the teacher's private lesson ---
                         await updateDoc(privateLessonRef, {
                             sharedLessonId: docRef.id
                         });
@@ -371,7 +549,7 @@ let lessonCache = [];
                     }
                 }
 
-                // 4. VIEW SUBMISSIONS
+                // 4. VIEW SUBMISSIONS (Logic unchanged, but the rendering now expects the new structure)
                 async function viewSubmissions(sharedLessonId, lessonName) {
                     submissionsLessonName.textContent = lessonName;
                     submissionsList.innerHTML = '<p class="text-gray-500">Loading submissions...</p>';
@@ -429,6 +607,11 @@ let lessonCache = [];
                     const slideCommands = workData[slideIndex] || [];
 
                     // 2. Update modal slide counter and navigation state
+                    const viewWorkSlideControls = document.getElementById('view-work-slide-controls');
+                    const viewWorkPrevSlide = document.getElementById('view-work-prev-slide');
+                    const viewWorkNextSlide = document.getElementById('view-work-next-slide');
+                    const viewWorkSlideCounter = document.getElementById('view-work-slide-counter');
+
                     viewWorkSlideCounter.textContent = `Slide ${slideIndex + 1} / ${lessonConfig.lessonData.length}`;
                     viewWorkPrevSlide.disabled = (slideIndex === 0);
                     viewWorkNextSlide.disabled = (slideIndex === lessonConfig.lessonData.length - 1);
@@ -542,7 +725,7 @@ let lessonCache = [];
                 }
 
 
-                // 5. VISUALIZE STUDENT WORK
+                // 5. VISUALIZE STUDENT WORK (CRITICAL FIX: Loads slides from subcollection)
                 async function visualizeStudentWork(sharedLessonId, workString) {
                     try {
                         // Clear previous state and show loader
@@ -552,27 +735,34 @@ let lessonCache = [];
                         viewWorkGrid.classList.add('hidden');
                         viewWorkSlideControls.classList.add('hidden'); // Hide controls until data is ready
 
-                        // 1. Fetch and Parse Lesson Config
+                        // 1. Fetch Lesson Config Metadata
                         const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${sharedLessonId}`;
                         const lessonDocRef = doc(db, lessonDocPath);
                         const lessonDoc = await getDoc(lessonDocRef);
 
                         if (!lessonDoc.exists()) {
-                            throw new Error("Lesson not found. It may have been deleted.");
+                            throw new Error("Lesson not found. It may have been deleted or unpublished.");
                         }
+                        
+                        const lessonMetadata = lessonDoc.data();
 
-                        let lessonConfig = JSON.parse(lessonDoc.data().config);
-                        if (typeof lessonConfig.lessonData === 'string') {
-                            lessonConfig.lessonData = JSON.parse(lessonConfig.lessonData);
-                        }
+                        // 2. Fetch all Slides (lessonData) from subcollection
+                        const lessonData = await window.firebaseServices.loadLessonSlides(lessonDocRef);
+                        
+                        // 3. Reconstruct the full config object expected by the render function
+                        const lessonConfig = {
+                            gameMode: lessonMetadata.gameMode,
+                            customBeeImageUrl: lessonMetadata.customBeeImageUrl,
+                            lessonData: lessonData // The reconstructed array of slide objects
+                        };
                         
                         const workData = JSON.parse(workString);
                         
-                        // 2. Store ALL data on the modal for navigation
+                        // 4. Store ALL data on the modal for navigation
                         viewWorkModal.dataset.lessonConfig = JSON.stringify(lessonConfig);
                         viewWorkModal.dataset.workData = workString;
                         
-                        // 3. Populate the raw commands list (already correct)
+                        // 5. Populate the raw commands list (already correct)
                         let formattedWork = '';
                         if (workData && workData.length > 0) {
                             workData.forEach((slideCommands, index) => {
@@ -583,7 +773,7 @@ let lessonCache = [];
                         }
                         viewWorkContent.textContent = formattedWork;
                         
-                        // 4. Render the first slide (index 0)
+                        // 6. Render the first slide (index 0)
                         renderSubmissionSlide(0, lessonConfig, workData);
 
 
@@ -594,7 +784,7 @@ let lessonCache = [];
                     }
                 }
 
-                // 6. TOGGLE PUBLIC STATUS
+                // 6. TOGGLE PUBLIC STATUS (Updated to use metadata only)
                 async function toggleLessonPublic(privateId, sharedId, currentStatus) {
                     if (!currentUserId) return;
 
@@ -618,7 +808,7 @@ let lessonCache = [];
                     }
                 }
 
-                // 7. LOAD PUBLIC GALLERY
+                // 7. LOAD PUBLIC GALLERY (No change, uses metadata)
                 async function loadPublicGallery() {
                     galleryList.innerHTML = '<p class="text-gray-500">Loading public lessons...</p>';
 
@@ -633,8 +823,13 @@ let lessonCache = [];
 
                         if (querySnapshot.empty) {
                             galleryList.innerHTML = '<p class="text-gray-500">No public lessons found yet. Check back soon!</p>';
+                            galleryPrompt.classList.remove('hidden'); // Show prompt when gallery is empty
                             return;
                         }
+                        
+                        // If lessons are found, hide the gallery prompt entirely
+                        galleryPrompt.classList.add('hidden');
+
 
                         galleryList.innerHTML = '';
                         querySnapshot.forEach((doc) => {
@@ -669,7 +864,7 @@ let lessonCache = [];
                     }
                 }
 
-                // 8. UPDATE GALLERY BUTTON STATE
+                // 8. UPDATE GALLERY BUTTON STATE (No change)
                 function updateGalleryButtonState() {
                     const allCloneButtons = galleryList.querySelectorAll('.clone-lesson-btn');
                     if (currentUserId) {
@@ -678,16 +873,18 @@ let lessonCache = [];
                             btn.title = "Clone to 'My Lessons'";
                             btn.classList.remove('opacity-50', 'cursor-not-allowed');
                         });
+                        galleryPrompt.classList.add('hidden');
                     } else {
                         allCloneButtons.forEach(btn => {
                             btn.disabled = true;
                             btn.title = "Log in to clone this lesson";
                             btn.classList.add('opacity-50', 'cursor-not-allowed');
                         });
+                        // The gallery prompt remains visible by default in the HTML on large screens
                     }
                 }
 
-                // 9. CLONE A PUBLIC LESSON
+                // 9. CLONE A PUBLIC LESSON (CRITICAL FIX: Clones metadata and slides subcollection)
                 async function cloneLesson(publicId) {
                     if (!currentUserId) {
                         window.beebotApp.showToast("Please log in to clone lessons.", 3000);
@@ -703,16 +900,33 @@ let lessonCache = [];
                         }
 
                         const publicLesson = publicDoc.data();
-
                         const privateCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
+
+                        // --- 1. Create the new private lesson metadata ---
                         const docRef = await addDoc(collection(db, privateCollectionPath), {
                             name: `(Clone) ${publicLesson.originalName || 'Untitled Lesson'}`,
-                            config: publicLesson.config,
+                            gameMode: publicLesson.gameMode,
+                            customBeeImageUrl: publicLesson.customBeeImageUrl || null,
+                            slideCount: publicLesson.slideCount,
                             createdAt: new Date().toISOString(),
                             clonedFrom: publicId,
                             isPublic: false,
                             sharedLessonId: null
                         });
+                        
+                        // --- 2. Copy all slides from public subcollection to new private subcollection ---
+                        const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
+                        const privateSlidesCollectionRef = collection(db, `${privateCollectionPath}/${docRef.id}/slides`);
+                        const publicSlides = await getDocs(publicSlidesRef);
+                        
+                        const copyPromises = [];
+                        publicSlides.forEach(slideDoc => {
+                            // Use the same slide ID in the new private subcollection
+                            const privateSlideRef = doc(privateSlidesCollectionRef, slideDoc.id);
+                            copyPromises.push(setDoc(privateSlideRef, slideDoc.data()));
+                        });
+                        await Promise.all(copyPromises);
+
 
                         console.log("Lesson cloned with ID:", docRef.id);
                         window.beebotApp.showToast("Lesson cloned! It's now in 'My Lessons'.");
@@ -725,42 +939,71 @@ let lessonCache = [];
                 }
 
 
-                // 10. DELETE a specific lesson
+                // 10. DELETE a specific lesson (CRITICAL FIX: Deletes the slides subcollection)
                 async function deleteLesson(lessonId) {
                     if (!currentUserId) return;
 
                     const lesson = lessonCache.find(l => l.id === lessonId);
+                    
                     if (lesson && lesson.sharedLessonId) {
                         const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${lesson.sharedLessonId}`);
+                        const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
                         try {
+                            // Delete public slides first
+                            await deleteCollection(publicSlidesRef);
+                            // Then delete the public metadata doc
                             await deleteDoc(publicLessonRef);
                             window.beebotApp.showToast("Public copy deleted.", 2000);
                         } catch (e) {
-                            console.error("Error deleting public lesson, proceeding with private delete:", e);
+                            console.error("Error deleting public lesson/slides, proceeding with private delete:", e);
                         }
                     }
 
-                    const lessonDocPath = `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`;
+                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                    const privateSlidesRef = collection(db, `${privateLessonRef.path}/slides`);
+
                     try {
-                        await deleteDoc(doc(db, lessonDocPath));
+                        // Delete private slides first
+                        await deleteCollection(privateSlidesRef);
+                        // Then delete the private metadata doc
+                        await deleteDoc(privateLessonRef);
                         window.beebotApp.showToast("Lesson deleted.");
                     } catch (e) {
                         console.error("Error deleting document: ", e);
                     }
                 }
 
-                // 11. LOAD a specific lesson to the editor
-                function loadSpecificLesson(lessonId) {
-                    const lesson = lessonCache.find(l => l.id === lessonId);
-                    if (lesson && lesson.config) {
-                        window.beebotApp.loadSavedLesson(lesson.config);
-                        myLessonsModal.classList.add('hidden');
-                    } else {
+                // 11. LOAD a specific lesson to the editor (CRITICAL FIX: Loads slides from subcollection)
+                async function loadSpecificLesson(lessonId) {
+                    const lessonMetadata = lessonCache.find(l => l.id === lessonId);
+                    if (!lessonMetadata) {
                         console.error("Could not find lesson in cache.");
+                        return;
+                    }
+
+                    const lessonDocRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                    
+                    try {
+                        const lessonData = await window.firebaseServices.loadLessonSlides(lessonDocRef);
+
+                        // Reconstruct the full config object expected by the app
+                        const fullLessonConfig = {
+                            gameMode: lessonMetadata.gameMode,
+                            customBeeImageUrl: lessonMetadata.customBeeImageUrl,
+                            lessonData: lessonData // The reconstructed array of slides
+                        };
+                        
+                        // Pass the reconstructed config object to the app
+                        window.beebotApp.loadSavedLesson(fullLessonConfig);
+                        myLessonsModal.classList.add('hidden');
+
+                    } catch(e) {
+                        console.error("Error loading lesson slides:", e);
+                        window.beebotApp.showToast("Error loading lesson details.", 3000);
                     }
                 }
 
-                // 12. SAVE API KEY
+                // 12. SAVE API KEY (No change)
                 async function saveApiKey() {
                     if (!currentUserId) return;
 
@@ -786,7 +1029,7 @@ let lessonCache = [];
                     }
                 }
 
-                // 13. GET API KEY
+                // 13. GET API KEY (No change)
                 async function getApiKey() {
                     if (!currentUserId) return null;
 
@@ -806,6 +1049,41 @@ let lessonCache = [];
 
 
                 // --- FIREBASE-RELATED EVENT LISTENERS ---
+
+                // CRITICAL FIX: The event listeners must be placed here, after the DOM elements are retrieved.
+                loginBtn.addEventListener('click', async () => {
+                    const provider = new GoogleAuthProvider();
+                    try {
+                        await signInWithPopup(auth, provider);
+                    } catch (error) {
+                        console.error("Login Error:", error);
+                        window.beebotApp.showToast(`Login failed: ${error.message}`, 3000);
+                    }
+                });
+
+                const handleLogout = async () => {
+                    try {
+                        await signOut(auth);
+                        window.location.reload();
+                    } catch (error) {
+                        console.error("Logout Error:", error);
+                    }
+                };
+                logoutBtn.addEventListener('click', handleLogout);
+                logoutBtnGame.addEventListener('click', handleLogout);
+                
+                // --- NEW: Tutorial Button Listeners ---
+                tutorialBtn.addEventListener('click', () => {
+                    tutorialModal.classList.remove('hidden');
+                });
+                closeTutorialModalBtn.addEventListener('click', () => {
+                    tutorialModal.classList.add('hidden');
+                });
+                // Ensure the footer button also closes the modal
+                closeTutorialModalFooterBtn.addEventListener('click', () => {
+                    tutorialModal.classList.add('hidden');
+                });
+
 
                 myLessonsBtn.addEventListener('click', () => myLessonsModal.classList.remove('hidden'));
                 closeLessonsModalBtn.addEventListener('click', () => myLessonsModal.classList.add('hidden'));
@@ -878,6 +1156,7 @@ let lessonCache = [];
                 // --- VIZ FIX: Navigation listeners for the submission modal ---
                 const handleVizNavigation = (direction) => {
                     const currentIndex = parseInt(viewWorkModal.dataset.currentVizIndex, 10);
+                    // The lessonConfig is stored as a JSON string in the modal dataset
                     const lessonConfig = JSON.parse(viewWorkModal.dataset.lessonConfig);
                     const workData = JSON.parse(viewWorkModal.dataset.workData);
                     
@@ -887,6 +1166,10 @@ let lessonCache = [];
                         renderSubmissionSlide(newIndex, lessonConfig, workData);
                     }
                 };
+
+                const viewWorkSlideControls = document.getElementById('view-work-slide-controls');
+                const viewWorkPrevSlide = document.getElementById('view-work-prev-slide');
+                const viewWorkNextSlide = document.getElementById('view-work-next-slide');
 
                 viewWorkPrevSlide.addEventListener('click', () => handleVizNavigation(-1));
                 viewWorkNextSlide.addEventListener('click', () => handleVizNavigation(1));
@@ -930,11 +1213,15 @@ let lessonCache = [];
         });
     </script>
     <style>
+        /* --- GLOBAL SCROLL FIX --- */
         body, html {
             height: 100%;
-            overflow: hidden;
+            overflow-y: auto; /* Allow vertical scrolling */
+            overflow-x: hidden; /* Prevent horizontal scrolling */
             font-family: 'Inter', sans-serif;
         }
+        /* --- END GLOBAL SCROLL FIX --- */
+        
         #grid-container {
             display: grid;
             position: relative;
@@ -1075,6 +1362,105 @@ let lessonCache = [];
                 height: calc(100vh - 2rem);
             }
         }
+        
+        /* --- NEW LANDSCAPE OPTIMIZATION --- */
+        /* Forces the central grid area to use full available screen height in landscape view */
+        @media (max-width: 1023px) and (orientation: landscape) {
+            #game-page {
+                padding: 0.5rem; /* Reduce padding to maximize space */
+            }
+            #game-page > .flex-col {
+                height: calc(100vh - 1rem); /* Use full viewport height minus minimal padding */
+                min-height: 0; /* Allow Flexbox item to shrink correctly */
+            }
+            /* Adjust the grid container section to take up available height */
+            #game-page .lg\:w-1\/2 {
+                height: 65vh; /* Keep some space for controls below */
+                min-height: 0;
+            }
+             /* Adjust controls and sequence sections to fit below the grid */
+            #game-page .lg\:w-1\/4 {
+                height: 35vh; /* Allocate remaining space for controls and sequence */
+                overflow-y: auto; /* Enable scrolling for controls if needed */
+            }
+            
+            /* On small landscape screens, we need to ensure the grid is vertically centered */
+            #game-page .flex-grow.flex.items-center.justify-center {
+                height: 100%;
+            }
+        }
+        /* Style for the collapsible tutorial sections */
+        .tutorial-details summary {
+            cursor: pointer;
+            list-style: none; /* Hide default marker */
+            padding: 1rem 0;
+            border-bottom: 1px solid #ddd;
+            font-weight: 600;
+            color: #1f2937;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .tutorial-details summary::-webkit-details-marker {
+            display: none;
+        }
+        .tutorial-details summary::after {
+            content: '►';
+            margin-left: 0.5rem;
+            transition: transform 0.2s;
+        }
+        .tutorial-details[open] summary::after {
+            content: '▼';
+        }
+        .tutorial-content {
+            padding: 0.5rem 0 1rem 1rem;
+            border-bottom: 1px solid #ddd;
+        }
+        .tutorial-content ul {
+            padding-left: 1rem;
+            margin-top: 0.5rem;
+        }
+        
+        /* --- GALLERY PROMPT STYLES --- */
+        @keyframes bounce-right {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(5px); }
+        }
+        /* Container for the button and the prompt bubble */
+        #gallery-cta-container {
+            position: absolute;
+            top: 1rem;
+            left: 1rem; /* Anchor to top left */
+            z-index: 20;
+            /* Flex properties are now on the wrapper div in HTML */
+        }
+        #gallery-prompt {
+            background-color: #fef3c7; /* Light yellow */
+            color: #b45309; /* Dark orange text */
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        #gallery-prompt::before {
+            content: '';
+            position: absolute;
+            right: 100%;
+            top: 50%;
+            width: 0;
+            height: 0;
+            border-top: 8px solid transparent;
+            border-bottom: 8px solid transparent;
+            border-right: 8px solid #fef3c7;
+            transform: translateY(-50%);
+        }
+        .bounce-arrow {
+            color: #ef4444; /* Red arrow */
+            font-size: 1.5rem;
+            animation: bounce-right 1s infinite;
+        }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1084,15 +1470,38 @@ let lessonCache = [];
 
     <!-- Homepage View -->
     <div id="home-page" class="w-full max-w-lg mx-auto text-center p-4">
+        
+        <!-- NEW LEFT-SIDE CALL TO ACTION (Gallery + Prompt) -->
+        <div id="gallery-cta-container" class="flex items-center space-x-2">
+            
+            <button id="gallery-btn" class="bg-teal-600 hover:bg-teal-500 text-white font-extrabold py-3 px-5 rounded-lg shadow-xl transition duration-200 transform hover:scale-105">
+                Browse Gallery
+            </button>
+            
+            <!-- This wraps the arrow and the bubble text -->
+            <!-- It remains visible by default on large screens -->
+            <div id="gallery-prompt-visual" class="hidden sm:flex items-center space-x-1 pointer-events-none">
+                 <div class="bounce-arrow">
+                    &#8592; <!-- Right arrow unicode -->
+                </div>
+                <div id="gallery-prompt">
+                    Explore Lessons!
+                </div>
+            </div>
+        </div>
+        <!-- END LEFT-SIDE -->
+
+        <!-- Right-Side Button Cluster -->
         <div class="absolute top-4 right-4 flex gap-2">
-            <button id="gallery-btn" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">Browse Gallery</button>
+            <button id="tutorial-btn" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md">Tutorial</button>
             <button id="settings-btn" class="hidden auth-required bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-lg shadow-md">Settings</button>
             <button id="login-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">Teacher Login</button>
             <button id="my-lessons-btn" class="hidden auth-required bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md">My Lessons</button>
             <button id="logout-btn-home" class="hidden auth-required bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Logout</button>
         </div>
 
-        <h1 class="text-4xl font-bold text-gray-800 mb-6 mt-16">Bee-Bot Lesson Creator</h1>
+        <h1 class="text-4xl font-bold text-blue-800 mb-6 mt-16">Coding Mat Generator</h1>
+        <p1 class="text-2xl font-bold text-gray-800 mb-6 mt-16">Unboxing CT</p1>
 
         <div class="bg-white p-8 rounded-lg shadow-lg">
             <div class="grid grid-cols-2 gap-4 mb-4">
@@ -1200,25 +1609,8 @@ let lessonCache = [];
                             <input type="file" id="bee-upload-input-game" class="hidden" accept="image/*">
                         </div>
 
-                        <div class="grid grid-cols-2 gap-2 text-sm">
-                            <div>
-                                <label for="pos-row-input" class="block font-semibold text-gray-700">Row:</label>
-                                <input type="number" id="pos-row-input" min="1" class="shadow-sm appearance-none border rounded w-full py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                            </div>
-                            <div>
-                                <label for="pos-col-input" class="block font-semibold text-gray-700">Col:</label>
-                                <input type="number" id="pos-col-input" min="1" class="shadow-sm appearance-none border rounded w-full py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                            </div>
-                            <div class="col-span-2">
-                                <label for="dir-select-input" class="block font-semibold text-gray-700">Facing:</label>
-                                <select id="dir-select-input" class="shadow-sm appearance-none border rounded w-full py-1 px-2 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                                    <option value="0">Up</option>
-                                    <option value="1">Right</option>
-                                    <option value="2">Down</option>
-                                    <option value="3">Left</option>
-                                </select>
-                            </div>
-                        </div>
+                        <!-- REMOVED THE STATIC POSITION INPUTS HERE (Lines 504-521 in the old file) -->
+                        
                         <button id="set-pos-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md text-sm teacher-only">Set Start Position</button>
 
                     </div>
@@ -1229,6 +1621,7 @@ let lessonCache = [];
                     </div>
                 </div>
 
+                <!-- EDITED: This static panel is now permanently hidden -->
                 <div id="text-edit-controls" class="mt-4 pt-4 border-t border-gray-200 teacher-only hidden">
                     <h3 class="font-semibold text-gray-700 mb-2">Edit Tile Text (for selected tile):</h3>
                     <div class="flex gap-2">
@@ -1260,9 +1653,9 @@ let lessonCache = [];
                  </div>
 
                  <button id="save-lesson-btn" class="w-full mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0 teacher-only hidden auth-required">Save Lesson Online</button>
-                 <button id="download-offline-btn" class="w-full mt-2 bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0 teacher-only">Download Lesson (Offline)</button>
+                 <!-- REMOVED: Download Lesson (Offline) button -->
                  <button id="print-physical-mat-btn" class="w-full mt-2 bg-pink-500 hover:bg-pink-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0 teacher-only">Print Physical Mat Tiles</button>
-                 <button id="new-game-btn" class="w-full mt-2 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0">New Lesson Setup</button>
+                 <button id="new-game-btn" class="w-full mt-2 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md shrink-0">Home</button>
             </div>
 
         </div>
@@ -1292,6 +1685,160 @@ let lessonCache = [];
             </div>
         </div>
     </div>
+    
+    <!-- --- NEW: Text Edit Modal (Centralized Input) --- -->
+    <div id="text-edit-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+            <h3 class="text-xl font-semibold mb-4">Edit Tile Text</h3>
+            
+            <label for="text-modal-input" class="block text-gray-700 text-sm font-bold mb-2">Text for Tile:</label>
+            <textarea id="text-modal-input" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24" placeholder="Enter text..."></textarea>
+            
+            <div class="flex items-center justify-between gap-2 mt-4">
+                <span class="text-sm font-medium text-gray-700">Font Size (px):</span>
+                <div class="flex items-center gap-2">
+                    <button id="text-modal-size-down" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold w-7 h-7 rounded-full shadow-md flex items-center justify-center">-</button>
+                    <span id="text-modal-current-size" class="text-sm font-semibold w-8 text-center">16</span>
+                    <button id="text-modal-size-up" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold w-7 h-7 rounded-full shadow-md flex items-center justify-center">+</button>
+                </div>
+            </div>
+            
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="text-modal-cancel" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Cancel</button>
+                <button id="text-modal-save" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Save</button>
+            </div>
+        </div>
+    </div>
+    <!-- --- END NEW TEXT EDIT MODAL --- -->
+
+    <!-- --- NEW: Set Position Modal (Position Inputs moved here) --- -->
+    <div id="set-pos-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+            <h3 class="text-xl font-semibold mb-4">Set Bee-Bot Start Position</h3>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label for="pos-row-input" class="block font-semibold text-gray-700 mb-1">Row (1=Top):</label>
+                    <!-- IMPORTANT: Using the existing input IDs -->
+                    <input type="number" id="pos-row-input" min="1" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                </div>
+                <div>
+                    <label for="pos-col-input" class="block font-semibold text-gray-700 mb-1">Column (1=Left):</label>
+                    <!-- IMPORTANT: Using the existing input IDs -->
+                    <input type="number" id="pos-col-input" min="1" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                </div>
+                <div class="col-span-2">
+                    <label for="dir-select-input" class="block font-semibold text-gray-700 mb-1">Facing:</label>
+                    <!-- IMPORTANT: Using the existing input IDs -->
+                    <select id="dir-select-input" class="shadow-sm appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+                        <option value="0">Up</option>
+                        <option value="1">Right</option>
+                        <option value="2">Down</option>
+                        <option value="3">Left</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="set-pos-modal-cancel" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Cancel</button>
+                <button id="set-pos-modal-save" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Set Position</button>
+            </div>
+        </div>
+    </div>
+    <!-- --- END NEW POSITION MODAL --- -->
+
+    <!-- --- NEW: Tutorial Modal (with Collapsible Sections) --- -->
+    <div id="tutorial-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4 sticky top-0 bg-white z-10 py-2 border-b">
+                <h3 class="text-2xl font-bold text-gray-800">Application Tutorial</h3>
+                <button id="close-tutorial-modal" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+            </div>
+            
+            <div class="space-y-2">
+                
+                <!-- Section: How to Start -->
+                <details class="tutorial-details">
+                    <summary>1. Getting Started & Creating a Lesson</summary>
+                    <div class="tutorial-content text-gray-700">
+                        <p class="mb-2">To unlock saving, sharing, and student tracking, first log in using your Gmail account via the Teacher Login button.</p>
+                        <ul class="list-disc list-inside space-y-2">
+                            <li><strong>Define Your Mat:</strong> Enter the desired number of Rows and Columns (1–10).</li>
+                            <li><strong>Choose Your Lesson Type:</strong> Select the content mode that fits your needs:
+                                <ul>
+                                    <li><strong style="color: green;">Image Lesson:</strong> For uploading pictures to the tiles.</li>
+                                    <li><strong style="color:  blue;">Text Lesson:</strong> For typing words or letters onto the tiles.</li>
+                                    <li><strong style="color: violet;">AI Lesson:</strong> For generating unique images based on text prompts. (Requires API Key)</li>
+                                    <li><strong style="color: blue green;">UNBOX Lesson (Recommended):</strong> Combines Image, Text, and AI generation features into one interface for maximum flexibility.</li>
+                                </ul>
+                            </li>
+                            <li><strong>Start:</strong> Once satisfied with your settings, click the corresponding <strong>Start button.</strong> Don't worry about the character; you can <strong>change the Bee Character</strong> anytime within the editor.</li>
+                        </ul>
+                        <p class="mt-3 font-semibold text-red-600">
+                            Important Reminder for AI: If you plan to generate images, you must first input your personal <strong>Google AI API Key</strong> in the <strong>Settings menu.</strong> Instructions on obtaining this key are provided within the Settings modal.
+                        </p>
+                    </div>
+                </details>
+
+                <!-- Section: How to Put Content in Tiles -->
+                <details class="tutorial-details">
+                    <summary>2. Adding Content and Setting Position</summary>
+                    <div class="tutorial-content text-gray-700 space-y-2">
+                        <p>To add content to the mat, simply <strong>click the desired tile</strong>. A pop-up will guide you based on your chosen Lesson Type (Upload, Type Text, or Generate AI).</p>
+                        <p>To change the Bee-Bot's starting position, click the <strong>Set Start Position</strong> button in the Controls panel and enter the Row, Column, and Facing Direction.</p>
+                    </div>
+                </details>
+
+                <!-- Section: How to Save Lesson -->
+                <details class="tutorial-details">
+                    <summary>3. Saving and Managing Your Lessons</summary>
+                    <div class="tutorial-content text-gray-700 space-y-2">
+                        <ul class="list-disc list-inside">
+                            <li><strong style="color: green;">Save Online:</strong> When finished, click Save Lesson Online and give your lesson a name.</li>
+                            <li><strong style="color: green;">Access Lessons:</strong> To view and manage your saved lessons, click the Home button, then click My Lessons.</li>
+                        </ul>
+                    </div>
+                </details>
+
+                <!-- Section: How to Share My Lesson -->
+                <details class="tutorial-details">
+                    <summary>4. Sharing Lessons with Students</summary>
+                    <div class="tutorial-content text-gray-700">
+                        <p>Go to <strong style="color: green;">My Lessons</strong>, find your lesson, and click <strong style="color: green;">Share</strong>. Copy the provided link to distribute to your students. </p>
+                        <p class="font-semibold text-green-700">Students DO NOT need to log in; the link gives them direct access.</p>
+                    </div>
+                </details>
+
+                <!-- Section: How to Check My Students Work -->
+                <details class="tutorial-details">
+                    <summary>5. Checking Student Submissions</summary>
+                    <div class="tutorial-content text-gray-700">
+                        <p>Go to <strong style="color: green;">My Lessons,</strong> find your shared mat, and click <strong style="color: green;">Submissions.</strong> Here you'll see a list of student work.</p>
+                        <p>Clicking <strong style="color: green;">View Work</strong> will display the Mat and show a red line trace of the exact path the student's commands took. This lets you visually confirm if they achieved the goal. </p>
+                        <p class="font-semibold text-orange-600">Reminder: Instruct students to enter their **initials or name** when submitting their work.</p>
+                    </div>
+                </details>
+
+                <!-- Section: How to Share My Work with Other Teachers -->
+                <details class="tutorial-details">
+                    <summary>6. Sharing and Cloning Lessons with Colleagues</summary>
+                    <div class="tutorial-content text-gray-700 space-y-2">
+                        <ul class="list-disc list-inside">
+                            <li><strong style="color: green;">Share with Teachers:</strong> In My Lessons, click Publish next to a shared mat. This adds your lesson to the <strong style="color: green;">Browse Gallery</strong>.</li>
+                            <li><strong style="color: green;">Check Gallery:</strong> Click Browse Gallery on the Home screen to see lessons published by other teachers. You can click <strong style="color: green;">Clone</strong> next to any lesson to add a copy to your own My Lessons list.</li>
+                        </ul>
+                    </div>
+                </details>
+
+            </div>
+            
+            <div class="flex justify-end mt-6">
+                <button id="close-tutorial-modal-footer" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Got It</button>
+            </div>
+        </div>
+    </div>
+    <!-- --- END NEW TUTORIAL MODAL --- -->
+
 
     <!-- "My Lessons" Modal -->
     <div id="my-lessons-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 hidden">
@@ -1480,12 +2027,31 @@ let lessonCache = [];
             const commandSequenceDiv = document.getElementById('command-sequence');
             const stopBtn = document.getElementById('stop-btn');
             const textEditControls = document.getElementById('text-edit-controls');
-            const tileTextInput = document.getElementById('tile-text-input');
-            const setTextBtn = document.getElementById('set-text-btn');
-
+            
+            // --- UPDATED: References now point to the MODAL elements ---
+            const textEditModal = document.getElementById('text-edit-modal');
+            const tileTextInput = document.getElementById('text-modal-input');
+            const textModalSaveBtn = document.getElementById('text-modal-save');
+            const textModalCancelBtn = document.getElementById('text-modal-cancel');
+            
             const fontSizeDownBtn = document.getElementById('font-size-down');
             const fontSizeUpBtn = document.getElementById('font-size-up');
             const currentFontSizeSpan = document.getElementById('current-font-size');
+            
+            // --- NEW: Modal Font Size Controls ---
+            const textModalSizeDown = document.getElementById('text-modal-size-down');
+            const textModalSizeUp = document.getElementById('text-modal-size-up');
+            const textModalCurrentSize = document.getElementById('text-modal-current-size');
+            
+            // --- NEW: Position Modal Elements (These are now inside the modal) ---
+            const posRowInput = document.getElementById('pos-row-input');
+            const posColInput = document.getElementById('pos-col-input');
+            const dirSelectInput = document.getElementById('dir-select-input');
+            const setPosBtn = document.getElementById('set-pos-btn');
+            const setPosModal = document.getElementById('set-pos-modal');
+            const setPosModalCancel = document.getElementById('set-pos-modal-cancel');
+            const setPosModalSave = document.getElementById('set-pos-modal-save');
+
 
             const tileEditControls = document.getElementById('tile-edit-controls');
             const clearTileBtn = document.getElementById('clear-tile-btn');
@@ -1507,11 +2073,6 @@ let lessonCache = [];
 
             const changeBeeBtnGame = document.getElementById('change-bee-btn-game');
             const beeUploadInputGame = document.getElementById('bee-upload-input-game');
-
-            const posRowInput = document.getElementById('pos-row-input');
-            const posColInput = document.getElementById('pos-col-input');
-            const dirSelectInput = document.getElementById('dir-select-input');
-            const setPosBtn = document.getElementById('set-pos-btn');
 
             const toast = document.getElementById('toast-notification');
             const toastMessage = document.getElementById('toast-message');
@@ -1535,6 +2096,15 @@ let lessonCache = [];
             const choiceImageBtn = document.getElementById('choice-image-btn');
             const choiceTextBtn = document.getElementById('choice-text-btn');
             const choiceAIBtn = document.getElementById('choice-ai-btn');
+            
+            // --- NEW: Tutorial Modal Elements ---
+            const tutorialBtn = document.getElementById('tutorial-btn');
+            const tutorialModal = document.getElementById('tutorial-modal');
+            const closeTutorialModalBtn = document.getElementById('close-tutorial-modal');
+            const closeTutorialModalFooterBtn = document.getElementById('close-tutorial-modal-footer');
+
+            // --- GALLERY PROMPT ELEMENTS ---
+            const galleryPromptVisual = document.getElementById('gallery-prompt-visual');
 
 
             // --- Game State ---
@@ -1579,13 +2149,15 @@ let lessonCache = [];
                 currentStudentLessonId = studentLessonId;
 
                 const checkFirebase = setInterval(() => {
-                    if (window.firebaseServices) {
+                    // CRITICAL FIX: Ensure loadLessonSlides is available on firebaseServices
+                    if (window.firebaseServices && window.firebaseServices.loadLessonSlides) {
                         clearInterval(checkFirebase);
                         loadStudentLessonFromShare(studentLessonId);
                     }
                 }, 100);
             }
 
+            // CRITICAL FIX: Function updated to fetch metadata AND slides from subcollection
             async function loadStudentLessonFromShare(lessonId) {
                 const { db, appId, getDoc, doc } = window.firebaseServices;
                 try {
@@ -1594,8 +2166,19 @@ let lessonCache = [];
                     const lessonDoc = await getDoc(lessonDocRef);
 
                     if (lessonDoc.exists()) {
-                        const lessonConfigString = lessonDoc.data().config;
-                        loadStudentLesson(lessonConfigString);
+                        const lessonMetadata = lessonDoc.data();
+                        
+                        // VITAL: Fetch the slides from the subcollection
+                        const lessonData = await window.firebaseServices.loadLessonSlides(lessonDocRef);
+                        
+                        // Reconstruct the full config object
+                        const fullConfig = {
+                            gameMode: lessonMetadata.gameMode,
+                            customBeeImageUrl: lessonMetadata.customBeeImageUrl,
+                            lessonData: lessonData
+                        };
+
+                        loadStudentLesson(fullConfig);
                     } else {
                         window.beebotApp.showToast("The lesson link is invalid or the lesson was deleted.", 4000);
                         homePage.classList.remove('hidden');
@@ -1677,28 +2260,13 @@ let lessonCache = [];
                 setTimeout(resizeCanvasAndPath, 50);
             }
 
-            function loadStudentLesson(configString) {
-                let config;
-                try {
-                    config = JSON.parse(configString);
-                } catch (e) {
-                    console.error("Error parsing student lesson config string:", e);
-                    return;
-                }
-
+            // CRITICAL FIX: Now accepts a parsed config object
+            function loadStudentLesson(config) {
                 gameMode = config.gameMode;
                 isStudentMode = true;
 
-                if (typeof config.lessonData === 'string') {
-                    try {
-                        lessonData = JSON.parse(config.lessonData);
-                    } catch (e) {
-                        console.error("Error parsing student lesson data (inner parse failed):", e);
-                        return;
-                    }
-                } else {
-                    lessonData = config.lessonData;
-                }
+                // config.lessonData is now guaranteed to be the parsed array of slide objects
+                lessonData = config.lessonData; 
 
                 currentSlideIndex = 0;
                 studentWork = lessonData.map(() => []);
@@ -1729,28 +2297,13 @@ let lessonCache = [];
                 setTimeout(resizeCanvasAndPath, 50);
             }
 
-            function loadSavedLesson(configString) {
-                let config;
-                try {
-                    config = JSON.parse(configString);
-                } catch (e) {
-                    console.error("Error parsing saved lesson config string:", e);
-                    return;
-                }
-
+            // CRITICAL FIX: Now accepts a parsed config object
+            function loadSavedLesson(config) {
                 gameMode = config.gameMode;
                 isStudentMode = false;
 
-                if (typeof config.lessonData === 'string') {
-                    try {
-                        lessonData = JSON.parse(config.lessonData);
-                    } catch (e) {
-                        console.error("Error parsing saved lesson data (inner parse failed):", e);
-                        return;
-                    }
-                } else {
-                    lessonData = config.lessonData;
-                }
+                // config.lessonData is now guaranteed to be the parsed array of slide objects
+                lessonData = config.lessonData;
 
                 currentSlideIndex = 0;
                 studentWork = [];
@@ -1817,8 +2370,13 @@ let lessonCache = [];
                     commands = [];
                 }
 
+                // HIDE STATIC CONTROLS
                 textEditControls.classList.add('hidden');
                 tileEditControls.classList.add('hidden');
+                // Ensure Modals are closed
+                textEditModal.classList.add('hidden');
+                setPosModal.classList.add('hidden');
+                
                 selectedCell = null;
 
                 buildGridCells();
@@ -1953,12 +2511,37 @@ let lessonCache = [];
             }
             // --- END OF DRAG-N-DROP Handlers ---
 
+            // --- NEW: Text Edit Modal Opening Function ---
+            function openTextEditModal(row, col) {
+                // Ensure text edit controls are fully hidden before showing modal
+                textEditControls.classList.add('hidden'); 
+                
+                const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                const currentText = cellData.type === 'text' ? cellData.value : '';
+                const currentSize = cellData.fontSize || DEFAULT_FONT_SIZE;
+                
+                textEditModal.dataset.row = row;
+                textEditModal.dataset.col = col;
+                
+                tileTextInput.value = currentText;
+                textModalCurrentSize.textContent = currentSize;
+                
+                textEditModal.classList.remove('hidden');
+                tileTextInput.focus();
+                
+                // Also ensures the "Clear Tile" button is visible when editing text
+                tileEditControls.classList.remove('hidden');
+            }
+            
             function handleCellClick(cell, row, col) {
                 if (isStudentMode) return;
 
-                textEditControls.classList.add('hidden');
+                // Always hide modals and static controls first
+                textEditModal.classList.add('hidden');
+                tileChoiceModal.classList.add('hidden');
+                setPosModal.classList.add('hidden'); // Ensure position modal is closed
                 tileEditControls.classList.add('hidden');
-
+                
                 if (selectedCell) {
                     selectedCell.classList.remove('selected');
                 }
@@ -1970,32 +2553,37 @@ let lessonCache = [];
 
                 selectedCell = cell;
                 selectedCell.classList.add('selected');
-                tileEditControls.classList.remove('hidden');
-
-                tileTextInput.value = '';
-
+                
                 const cellData = lessonData[currentSlideIndex].gridData[row][col];
 
                 if (gameMode === 'image') {
                     if (cellData.type === 'empty') {
                         openImageUploader(row, col);
+                    } else {
+                        // If cell has image, clicking just selects it (for "Clear" or drag)
+                        tileEditControls.classList.remove('hidden');
                     }
-
+                    
                 } else if (gameMode === 'text') {
-                    openTextEditor(row, col);
+                    // FIX: Open the centralized modal instead of showing the static panel
+                    openTextEditModal(row, col);
 
                 } else if (gameMode === 'ai') {
                     if (cellData.type === 'empty') {
                         openAIModal(row, col);
+                    } else {
+                        tileEditControls.classList.remove('hidden');
                     }
 
                 } else if (gameMode === 'unbox') {
+                    // In UNBOX mode, ALWAYS open the choice modal
                     tileChoiceModal.dataset.row = row;
                     tileChoiceModal.dataset.col = col;
                     tileChoiceModal.classList.remove('hidden');
+                    tileEditControls.classList.remove('hidden');
                 }
             }
-
+            
             // --- UNBOX Helper functions ---
             function openImageUploader(row, col) {
                 const input = document.createElement('input');
@@ -2022,15 +2610,8 @@ let lessonCache = [];
             }
 
             function openTextEditor(row, col) {
-                const cellData = lessonData[currentSlideIndex].gridData[row][col];
-                textEditControls.classList.remove('hidden');
-
-                if (cellData.type === 'text') {
-                    tileTextInput.value = cellData.value;
-                }
-                const currentSize = cellData.fontSize || DEFAULT_FONT_SIZE;
-                currentFontSizeSpan.textContent = currentSize;
-                tileTextInput.focus();
+                // Reroutes to the new modal function
+                openTextEditModal(row, col);
             }
 
             function openAIModal(row, col) {
@@ -2173,23 +2754,12 @@ let lessonCache = [];
                 }
             }
 
+            // --- REMOVED: saveLessonOffline function ---
+            /*
             function saveLessonOffline() {
-                const lessonConfig = {
-                    gameMode: gameMode,
-                    customBeeImageUrl: customBeeImageUrl,
-                    lessonData: lessonData
-                };
-
-                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(lessonConfig));
-
-                const downloadAnchor = document.createElement('a');
-                downloadAnchor.setAttribute("href", dataStr);
-                downloadAnchor.setAttribute("download", "beebot-lesson.json");
-                document.body.appendChild(downloadAnchor);
-                downloadAnchor.click();
-                downloadAnchor.remove();
-                showToast('Lesson downloaded for offline use!', 2000);
+                // Removed the entire function body as requested
             }
+            */
 
             // --- Function to generate PDF for physical mat ---
             async function generatePhysicalMatPDF() {
@@ -2213,7 +2783,7 @@ let lessonCache = [];
                 const tileHeight = 5;
                 const xPos = (pageWidth - tileWidth) / 2;
                 const yPosTop = margin;
-                const yPosBottom = margin + tileHeight + margin;
+                const yPosBottom = margin + tileWidth + margin; // Corrected to use tileWidth for initial vertical offset
 
                 let tileIndex = 0;
 
@@ -2539,7 +3109,7 @@ let lessonCache = [];
                             if (pathSimState.dir === 2) backRow--;
                             if (pathSimState.dir === 3) backCol++;
 
-                            if (backRow >= 0 && backCol < slide.gridRows && backCol >= 0 && backCol < slide.gridCols) {
+                            if (backRow >= 0 && backRow < slide.gridRows && backCol >= 0 && backCol < slide.gridCols) {
                                 pathSimState.row = backRow;
                                 pathSimState.col = backCol;
                                 tempCtx.lineTo(pathSimState.col * cellW + cellW / 2, pathSimState.row * cellH + cellH / 2);
@@ -2662,36 +3232,65 @@ let lessonCache = [];
                 }
             }
 
-            // --- Font Size Change Function ---
-            function changeFontSize(direction) {
-                if (!selectedCell) return;
+            // --- Font Size Change Function (for MODAL) ---
+            function changeTextModalFontSize(direction) {
+                // Get the current size from the modal span
+                let currentSize = parseInt(textModalCurrentSize.textContent, 10);
+                
+                // Determine if we are increasing or decreasing (1 or -1)
+                const step = direction * FONT_STEP;
+                currentSize += step;
 
-                const row = selectedCell.dataset.row;
-                const col = selectedCell.dataset.col;
-                const cellData = lessonData[currentSlideIndex].gridData[row][col];
-
-                let currentSize = cellData.fontSize || DEFAULT_FONT_SIZE;
-
-                if (direction === 'up') {
-                    currentSize = Math.min(currentSize + FONT_STEP, MAX_FONT_SIZE);
-                } else {
-                    currentSize = Math.max(currentSize - FONT_STEP, MIN_FONT_SIZE);
-                }
-
-                cellData.fontSize = currentSize;
-                currentFontSizeSpan.textContent = currentSize;
-
-                let textDiv = selectedCell.querySelector('.cell-text');
-                if (!textDiv) {
-                    selectedCell.innerHTML = '';
-                    textDiv = document.createElement('div');
-                    textDiv.className = 'cell-text';
-                    selectedCell.appendChild(textDiv);
-                }
-                textDiv.style.fontSize = `${currentSize}px`;
+                // Clamp the size to stay within limits
+                currentSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, currentSize));
+                
+                // Update the modal span
+                textModalCurrentSize.textContent = currentSize;
+                
+                // Optional: Provide visual feedback in the text area (CSS style if supported)
+                tileTextInput.style.fontSize = `${currentSize}px`;
             }
+            
+            // --- Event Listeners for Text Modal ---
+            textModalCancelBtn.addEventListener('click', () => {
+                textEditModal.classList.add('hidden');
+                selectedCell?.classList.remove('selected');
+                selectedCell = null;
+                tileEditControls.classList.add('hidden');
+            });
+            
+            textModalSaveBtn.addEventListener('click', () => {
+                if (!selectedCell) return;
+                
+                const row = textEditModal.dataset.row;
+                const col = textEditModal.dataset.col;
+                const text = tileTextInput.value;
+                const currentSize = parseInt(textModalCurrentSize.textContent, 10);
+                
+                const cellData = lessonData[currentSlideIndex].gridData[row][col];
+                
+                // 1. Update the data object
+                cellData.type = 'text';
+                cellData.value = text;
+                cellData.fontSize = currentSize;
+                
+                // 2. Update the UI
+                updateCellUI(selectedCell, cellData);
+                
+                // 3. Clean up
+                textEditModal.classList.add('hidden');
+                selectedCell.classList.remove('selected');
+                selectedCell = null;
+                tileEditControls.classList.add('hidden');
+                
+                showToast('Tile text updated!', 1500);
+            });
+            
+            // FIX APPLIED HERE: Swap the arguments to make + increase and - decrease
+            textModalSizeUp.addEventListener('click', () => changeTextModalFontSize(1)); // Send 1 (UP)
+            textModalSizeDown.addEventListener('click', () => changeTextModalFontSize(-1)); // Send -1 (DOWN)
 
-            // --- Event Listeners ---
+            // --- Event Listeners (Rest of App) ---
             startImageBtn.addEventListener('click', () => startGame('image'));
             startTextBtn.addEventListener('click', () => startGame('text'));
             startAiBtn.addEventListener('click', () => startGame('ai'));
@@ -2729,22 +3328,6 @@ let lessonCache = [];
                 }
             });
 
-            setTextBtn.addEventListener('click', () => {
-                if (selectedCell) {
-                    const row = selectedCell.dataset.row;
-                    const col = selectedCell.dataset.col;
-                    const text = tileTextInput.value;
-                    const currentSize = parseInt(currentFontSizeSpan.textContent, 10);
-
-                    const cellData = lessonData[currentSlideIndex].gridData[row][col];
-                    cellData.type = 'text';
-                    cellData.value = text;
-                    cellData.fontSize = currentSize;
-
-                    updateCellUI(selectedCell, cellData);
-                }
-            });
-
             clearTileBtn.addEventListener('click', () => {
                 if (selectedCell) {
                     const row = selectedCell.dataset.row;
@@ -2759,15 +3342,12 @@ let lessonCache = [];
 
                     selectedCell.classList.remove('selected');
                     selectedCell = null;
-                    textEditControls.classList.add('hidden');
+                    textEditModal.classList.add('hidden');
                     tileEditControls.classList.add('hidden');
 
                     showToast('Tile cleared!', 1500);
                 }
             });
-
-            fontSizeUpBtn.addEventListener('click', () => changeFontSize('up'));
-            fontSizeDownBtn.addEventListener('click', () => changeFontSize('down'));
 
             // --- UNBOX Modal Listeners ---
             choiceCancelBtn.addEventListener('click', () => {
@@ -2805,7 +3385,7 @@ let lessonCache = [];
                 }
             });
 
-            downloadOfflineBtn.addEventListener('click', saveLessonOffline);
+            // REMOVED: downloadOfflineBtn.addEventListener('click', saveLessonOffline);
             printPhysicalMatBtn.addEventListener('click', generatePhysicalMatPDF);
 
             aiModalCancel.addEventListener('click', () => aiModal.classList.add('hidden'));
@@ -2824,34 +3404,58 @@ let lessonCache = [];
 
             pathColorPicker.addEventListener('input', () => redrawFullPath());
 
+            // --- NEW START POSITION MODAL LISTENERS ---
             setPosBtn.addEventListener('click', () => {
                 if (isStudentMode) return;
+
+                // Fill the modal inputs with current state
+                posRowInput.value = gridRows - beebotState.row;
+                posColInput.value = beebotState.col + 1;
+                dirSelectInput.value = beebotState.dir;
+
+                setPosModal.classList.remove('hidden');
+                posRowInput.focus();
+            });
+
+            setPosModalCancel.addEventListener('click', () => {
+                setPosModal.classList.add('hidden');
+            });
+
+            setPosModalSave.addEventListener('click', () => {
+                if (isStudentMode) return; 
 
                 let newUIRow = parseInt(posRowInput.value, 10);
                 let newUICol = parseInt(posColInput.value, 10);
                 let newDir = parseInt(dirSelectInput.value, 10);
 
+                // Validation
                 if (isNaN(newUIRow) || newUIRow < 1 || newUIRow > gridRows || isNaN(newUICol) || newUICol < 1 || newUICol > gridCols) {
                     showToast(`Invalid Position. Row must be 1-${gridRows}, Col must be 1-${gridCols}.`, 3000);
-                    updateBeeBotInfo();
-                    return;
+                    return; 
                 }
 
+                // Convert user-facing (1-indexed) values to internal (0-indexed) state
                 const newInternalRow = gridRows - newUIRow;
                 const newInternalCol = newUICol - 1;
 
+                // Update the main beebot state
                 beebotState = {
                     row: newInternalRow,
                     col: newInternalCol,
                     dir: newDir,
                 };
 
+                // CRITICAL: Update the slide's initial state so this change is saved
                 lessonData[currentSlideIndex].initialBeebotState = { ...beebotState };
 
-                stopExecution();
-
+                // Apply the new new position
+                stopExecution(); // This resets the path and applies the new start position
+                
+                setPosModal.classList.add('hidden');
                 showToast('Bee-Bot start position updated for this slide!');
             });
+            // --- END NEW START POSITION MODAL LISTENERS ---
+
 
             window.addEventListener('resize', resizeCanvasAndPath);
 
@@ -2868,8 +3472,17 @@ let lessonCache = [];
 
         document.addEventListener('DOMContentLoaded', () => {
             console.log("BeeBot App Initialized.");
+            
+            // The gallery prompt is now permanently in the HTML, hidden only on sm screens via CSS classes.
+            // We ensure it is shown if the window size allows it.
+            const galleryPromptVisual = document.getElementById('gallery-prompt-visual');
+            if (galleryPromptVisual) {
+                // Remove the 'hidden' class on DOM load for large screens, ensuring persistence
+                 if (window.innerWidth >= 640) { // sm: breakpoint in Tailwind
+                    galleryPromptVisual.classList.remove('hidden');
+                }
+            }
         });
     </script>
 </body>
 </html>
-
