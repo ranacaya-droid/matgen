@@ -90,6 +90,8 @@
 
 
             // --- ENVIRONMENT VARIABLES (MANDATORY USE) ---
+            // TODO: PASTE YOUR FIREBASE CONFIG FROM YOUR PROJECT HERE
+            // Get this from your Firebase project settings (Project Overview > Project settings > Your apps)
             const firebaseConfig = {
   apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
   authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
@@ -230,6 +232,7 @@ let lessonCache = [];
                     slidesArray.push({
                         id: slide.id, // e.g., 'slide-0'
                         instruction: slide.instruction,
+                        instructionFontSize: slide.instructionFontSize || 'text-3xl', // <-- ADDED
                         initialBeebotState: slide.initialBeebotState,
                         gridRows: slide.gridRows,
                         gridCols: slide.gridCols,
@@ -271,7 +274,8 @@ let lessonCache = [];
                 setLogLevel('Debug');
 
                 // Make services available to the main app script
-                window.firebaseServices = { db, appId, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides };
+                // REMOVED 'appId' from this object
+                window.firebaseServices = { db, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides };
 
                 // --- FIREBASE AUTHENTICATION (The "Bouncer") ---
                 onAuthStateChanged(auth, (user) => {
@@ -287,19 +291,9 @@ let lessonCache = [];
                         currentUserId = null;
                         showLoggedOutUI();
 
-                        // FIX: Ensure Anonymous sign-in for students to read shared lessons
-                        const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                        
-                        if (initialToken) {
-                             signInWithCustomToken(auth, initialToken).catch((error) => {
-                                 console.error("Custom Token Sign-In Failed, falling back to Anonymous:", error);
-                                 // Fallback if custom token fails (rare)
-                                 signInAnonymously(auth).catch(handleAuthError);
-                             });
-                        } else {
-                             // Default to Anonymous Sign-In for all non-authenticated users (students)
-                             signInAnonymously(auth).catch(handleAuthError);
-                        }
+                        // FIX: For Netlify, we don't have a custom token.
+                        // We just sign in non-logged-in users (students) anonymously.
+                        signInAnonymously(auth).catch(handleAuthError);
                     }
                     updateGalleryButtonState();
                 });
@@ -313,8 +307,8 @@ let lessonCache = [];
 
                     myLessonsList.innerHTML = '<p class="text-gray-500">Loading lessons...</p>';
 
-                    // Path to the teacher's private lesson collection
-                    const lessonsCollectionPath = `artifacts/${appId}/users/${userId}/lessons`;
+                    // Path to the teacher's private lesson collection (Simplified)
+                    const lessonsCollectionPath = `users/${userId}/lessons`;
                     const q = query(collection(db, lessonsCollectionPath));
 
                     onSnapshot(q, (querySnapshot) => {
@@ -412,7 +406,8 @@ let lessonCache = [];
                     }
 
                     const lessonData = window.beebotApp.getLessonData();
-                    const lessonsCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
+                    // Simplified path
+                    const lessonsCollectionPath = `users/${currentUserId}/lessons`;
 
                     // --- IMAGE COMPRESSION STEP ---
                     // Create a deep copy to avoid modifying the in-memory lesson
@@ -458,6 +453,7 @@ let lessonCache = [];
                             // Prepare slide data for saving (stringify complex objects to avoid firestore internal errors)
                             const slideDataToSave = {
                                 instruction: slide.instruction,
+                                instructionFontSize: slide.instructionFontSize || 'text-3xl', // <-- ADDED
                                 gridRows: slide.gridRows,
                                 gridCols: slide.gridCols,
                                 gridData: JSON.stringify(slide.gridData), 
@@ -486,24 +482,10 @@ let lessonCache = [];
                         return;
                     }
 
-                    const lesson = lessonCache.find(l => l.id === lessonId);
-                    if (!lesson) {
-                        window.beebotApp.showToast("Error: Could not find lesson to share.", 3000);
-                        return;
-                    }
-
-                    // If already shared, just show the link
-                    if (lesson.sharedLessonId) {
-                        const shareUrl = `${window.location.origin}${window.location.pathname}?lesson=${lesson.sharedLessonId}`;
-                        shareLinkInput.value = shareUrl;
-                        shareLinkModal.classList.remove('hidden');
-                        shareLinkInput.select();
-                        window.beebotApp.showToast("This lesson is already shared!");
-                        return;
-                    }
-
-                    const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
-                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                    // Simplified path
+                    const publicCollectionPath = `public/shared-lessons`;
+                    // Simplified path
+                    const privateLessonRef = doc(db, `users/${currentUserId}/lessons/${lessonId}`);
 
                     try {
                         // --- 1. Create public lesson metadata ---
@@ -556,7 +538,8 @@ let lessonCache = [];
                     submissionsModal.classList.remove('hidden');
 
                     try {
-                        const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
+                        // Simplified path
+                        const submissionsCollectionPath = `public/student-submissions`;
                         const q = query(
                             collection(db, submissionsCollectionPath),
                             where("lessonId", "==", sharedLessonId)
@@ -736,7 +719,8 @@ let lessonCache = [];
                         viewWorkSlideControls.classList.add('hidden'); // Hide controls until data is ready
 
                         // 1. Fetch Lesson Config Metadata
-                        const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${sharedLessonId}`;
+                        // Simplified path
+                        const lessonDocPath = `public/shared-lessons/${sharedLessonId}`;
                         const lessonDocRef = doc(db, lessonDocPath);
                         const lessonDoc = await getDoc(lessonDocRef);
 
@@ -789,8 +773,10 @@ let lessonCache = [];
                     if (!currentUserId) return;
 
                     const newStatus = !currentStatus;
-                    const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${sharedId}`);
-                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${privateId}`);
+                    // Simplified path
+                    const publicLessonRef = doc(db, `public/shared-lessons/${sharedId}`);
+                    // Simplified path
+                    const privateLessonRef = doc(db, `users/${currentUserId}/lessons/${privateId}`);
 
                     try {
                         // Update both public and private docs
@@ -813,7 +799,8 @@ let lessonCache = [];
                     galleryList.innerHTML = '<p class="text-gray-500">Loading public lessons...</p>';
 
                     try {
-                        const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
+                        // Simplified path
+                        const publicCollectionPath = `public/shared-lessons`;
                         const q = query(
                             collection(db, publicCollectionPath),
                             where("isPublic", "==", true)
@@ -892,7 +879,8 @@ let lessonCache = [];
                     }
 
                     try {
-                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${publicId}`);
+                        // Simplified path
+                        const publicLessonRef = doc(db, `public/shared-lessons/${publicId}`);
                         const publicDoc = await getDoc(publicLessonRef);
 
                         if (!publicDoc.exists()) {
@@ -900,7 +888,8 @@ let lessonCache = [];
                         }
 
                         const publicLesson = publicDoc.data();
-                        const privateCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
+                        // Simplified path
+                        const privateCollectionPath = `users/${currentUserId}/lessons`;
 
                         // --- 1. Create the new private lesson metadata ---
                         const docRef = await addDoc(collection(db, privateCollectionPath), {
@@ -946,7 +935,8 @@ let lessonCache = [];
                     const lesson = lessonCache.find(l => l.id === lessonId);
                     
                     if (lesson && lesson.sharedLessonId) {
-                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${lesson.sharedLessonId}`);
+                        // Simplified path
+                        const publicLessonRef = doc(db, `public/shared-lessons/${lesson.sharedLessonId}`);
                         const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
                         try {
                             // Delete public slides first
@@ -959,7 +949,8 @@ let lessonCache = [];
                         }
                     }
 
-                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                    // Simplified path
+                    const privateLessonRef = doc(db, `users/${currentUserId}/lessons/${lessonId}`);
                     const privateSlidesRef = collection(db, `${privateLessonRef.path}/slides`);
 
                     try {
@@ -981,7 +972,8 @@ let lessonCache = [];
                         return;
                     }
 
-                    const lessonDocRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+                    // Simplified path
+                    const lessonDocRef = doc(db, `users/${currentUserId}/lessons/${lessonId}`);
                     
                     try {
                         const lessonData = await window.firebaseServices.loadLessonSlides(lessonDocRef);
@@ -1014,7 +1006,8 @@ let lessonCache = [];
                     }
 
                     const encodedKey = btoa(key);
-                    const settingsDocPath = `artifacts/${appId}/users/${currentUserId}/settings/main`;
+                    // Simplified path
+                    const settingsDocPath = `users/${currentUserId}/settings/main`;
 
                     try {
                         await setDoc(doc(db, settingsDocPath), {
@@ -1033,7 +1026,8 @@ let lessonCache = [];
                 async function getApiKey() {
                     if (!currentUserId) return null;
 
-                    const settingsDocPath = `artifacts/${appId}/users/${currentUserId}/settings/main`;
+                    // Simplified path
+                    const settingsDocPath = `users/${currentUserId}/settings/main`;
 
                     try {
                         const docSnap = await getDoc(doc(db, settingsDocPath));
@@ -1554,7 +1548,21 @@ let lessonCache = [];
                     <button id="settings-btn-game" class="hidden auth-required bg-gray-700 hover:bg-gray-800 text-white font-bold py-2 px-4 rounded-lg shadow-md">Settings</button>
                     <button id="logout-btn-game" class="hidden auth-required bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg shadow-md">Logout</button>
                  </div>
-                 <input type="text" id="instruction-input" class="w-full text-3xl font-bold text-center text-gray-800 mb-4 p-2 rounded-lg shrink-0">
+                 <!-- NEW: Instruction wrapper with font size controls -->
+                 <div class="flex items-center gap-2 mb-4 shrink-0">
+                    <button id="instruction-size-down" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold w-10 h-10 rounded-lg shadow-md flex items-center justify-center shrink-0 teacher-only">-</button>
+                    <textarea id="instruction-input" class="flex-grow w-0 text-3xl font-bold text-center text-gray-800 p-2 rounded-lg resize-none h-24"></textarea>
+                    <button id="instruction-size-up" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold w-10 h-10 rounded-lg shadow-md flex items-center justify-center shrink-0 teacher-only">+</button>
+                     <!-- NEW: Read Aloud Button -->
+                     <button id="read-aloud-btn" class="bg-sky-500 hover:bg-sky-600 text-white font-bold w-10 h-10 rounded-lg shadow-md flex items-center justify-center shrink-0 ml-2">
+                        <svg id="read-aloud-icon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M12 4.01v.01m0 16v.01m8.071-8.071h.01M3.929 12h.01M19.071 4.929l-.01.01M4.929 19.071l-.01.01M18 12a6 6 0 11-12 0 6 6 0 0112 0z"></path></svg>
+                        <svg id="read-aloud-spinner" class="w-6 h-6 animate-spin hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                         </svg>
+                     </button>
+                 </div>
+                 <!-- END: Instruction wrapper -->
                 <div class="flex-grow flex items-center justify-center overflow-hidden min-h-0 p-2">
                     <div id="grid-container" class="w-full lg:w-auto lg:h-full">
                         <canvas id="path-canvas"></canvas>
@@ -2009,6 +2017,62 @@ let lessonCache = [];
         // --- GLOBAL APP LOGIC ---
         window.beebotApp = (function() {
 
+            // --- NEW: Audio Helper Functions ---
+            function base64ToArrayBuffer(base64) {
+                const binaryString = window.atob(base64);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                return bytes.buffer;
+            }
+
+            function pcmToWav(pcmData, sampleRate) {
+                const numSamples = pcmData.length;
+                const numChannels = 1;
+                const bitsPerSample = 16;
+                const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+                const blockAlign = numChannels * (bitsPerSample / 8);
+                const dataSize = numSamples * numChannels * (bitsPerSample / 8);
+                const buffer = new ArrayBuffer(44 + dataSize);
+                const view = new DataView(buffer);
+
+                // RIFF header
+                writeString(view, 0, 'RIFF');
+                view.setUint32(4, 36 + dataSize, true);
+                writeString(view, 8, 'WAVE');
+
+                // fmt chunk
+                writeString(view, 12, 'fmt ');
+                view.setUint32(16, 16, true); // Sub-chunk size (16 for PCM)
+                view.setUint16(20, 1, true); // Audio format (1 for PCM)
+                view.setUint16(22, numChannels, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, byteRate, true);
+                view.setUint16(32, blockAlign, true);
+                view.setUint16(34, bitsPerSample, true);
+
+                // data chunk
+                writeString(view, 36, 'data');
+                view.setUint32(40, dataSize, true);
+
+                // Write PCM data
+                let offset = 44;
+                for (let i = 0; i < numSamples; i++, offset += 2) {
+                    view.setInt16(offset, pcmData[i], true);
+                }
+
+                return new Blob([view], { type: 'audio/wav' });
+            }
+
+            function writeString(view, offset, string) {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            }
+            // --- END NEW Audio Helper Functions ---
+
             // --- DOM Elements ---
             const homePage = document.getElementById('home-page');
             const gamePage = document.getElementById('game-page');
@@ -2028,6 +2092,15 @@ let lessonCache = [];
             const stopBtn = document.getElementById('stop-btn');
             const textEditControls = document.getElementById('text-edit-controls');
             
+            // --- NEW: Instruction Font Size Elements ---
+            const instructionSizeDownBtn = document.getElementById('instruction-size-down');
+            const instructionSizeUpBtn = document.getElementById('instruction-size-up');
+
+            // --- NEW: Read Aloud Elements ---
+            const readAloudBtn = document.getElementById('read-aloud-btn');
+            const readAloudIcon = document.getElementById('read-aloud-icon');
+            const readAloudSpinner = document.getElementById('read-aloud-spinner');
+
             // --- UPDATED: References now point to the MODAL elements ---
             const textEditModal = document.getElementById('text-edit-modal');
             const tileTextInput = document.getElementById('text-modal-input');
@@ -2122,6 +2195,13 @@ let lessonCache = [];
             let studentName = null;
             let currentStudentLessonId = null;
 
+            // --- NEW: Audio State ---
+            let currentAudio = null;
+
+            // --- NEW: Instruction Font Size Constants ---
+            const INSTRUCTION_FONT_SIZES = ['text-sm', 'text-base', 'text-lg', 'text-xl', 'text-2xl', 'text-3xl', 'text-4xl', 'text-5xl'];
+            const DEFAULT_INSTRUCTION_FONT = 'text-3xl';
+
             // --- Lesson State ---
             let lessonData = [];
             let currentSlideIndex = 0;
@@ -2159,9 +2239,10 @@ let lessonCache = [];
 
             // CRITICAL FIX: Function updated to fetch metadata AND slides from subcollection
             async function loadStudentLessonFromShare(lessonId) {
-                const { db, appId, getDoc, doc } = window.firebaseServices;
+                const { db, getDoc, doc } = window.firebaseServices;
                 try {
-                    const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${lessonId}`;
+                    // Simplified path
+                    const lessonDocPath = `public/shared-lessons/${lessonId}`;
                     const lessonDocRef = doc(db, lessonDocPath);
                     const lessonDoc = await getDoc(lessonDocRef);
 
@@ -2265,6 +2346,11 @@ let lessonCache = [];
                 gameMode = config.gameMode;
                 isStudentMode = true;
 
+                // --- NEW: Hide instruction font size buttons for student ---
+                if (instructionSizeDownBtn) instructionSizeDownBtn.classList.add('hidden');
+                if (instructionSizeUpBtn) instructionSizeUpBtn.classList.add('hidden');
+                // --- END NEW ---
+                
                 // config.lessonData is now guaranteed to be the parsed array of slide objects
                 lessonData = config.lessonData; 
 
@@ -2345,6 +2431,7 @@ let lessonCache = [];
                     gridRows: rows,
                     gridCols: cols,
                     instruction: 'Program the Bee-Bot to reach the goal!',
+                    instructionFontSize: DEFAULT_INSTRUCTION_FONT, // <-- ADDED
                     initialBeebotState: {
                         row: startRow,
                         col: startCol,
@@ -2357,12 +2444,20 @@ let lessonCache = [];
             function loadSlide(index) {
                 if (index < 0 || index >= lessonData.length) return;
 
+                stopCurrentAudio(); // <-- ADD THIS
+
                 currentSlideIndex = index;
                 const slide = lessonData[currentSlideIndex];
 
                 gridRows = slide.gridRows;
                 gridCols = slide.gridCols;
                 instructionInput.value = slide.instruction;
+
+                // --- NEW: Apply instruction font size ---
+                const fontSizeClass = slide.instructionFontSize || DEFAULT_INSTRUCTION_FONT;
+                instructionInput.classList.remove(...INSTRUCTION_FONT_SIZES);
+                instructionInput.classList.add(fontSizeClass);
+                // --- END NEW ---
 
                 if (isStudentMode) {
                     commands = studentWork[currentSlideIndex] || [];
@@ -2679,6 +2774,7 @@ let lessonCache = [];
             function stopExecution() {
                 isExecuting = false;
                 document.getElementById('go-btn').disabled = false;
+                stopCurrentAudio(); // <-- ADD THIS
                 resetBeeToStart();
             }
 
@@ -2965,7 +3061,8 @@ let lessonCache = [];
                     const auth = getAuth();
                     const userId = auth.currentUser ? auth.currentUser.uid : 'anonymous-' + crypto.randomUUID();
 
-                    const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
+                    // Simplified path
+                    const submissionsCollectionPath = `public/student-submissions`;
 
                     const docRef = await addDoc(collection(db, submissionsCollectionPath), {
                         studentName: studentName,
@@ -3455,6 +3552,163 @@ let lessonCache = [];
                 showToast('Bee-Bot start position updated for this slide!');
             });
             // --- END NEW START POSITION MODAL LISTENERS ---
+
+
+            // --- NEW: Instruction Font Size Logic ---
+            function changeInstructionFontSize(direction) {
+                if (isStudentMode) return;
+
+                const slide = lessonData[currentSlideIndex];
+                let currentClass = slide.instructionFontSize || DEFAULT_INSTRUCTION_FONT;
+                let currentIndex = INSTRUCTION_FONT_SIZES.indexOf(currentClass);
+
+                if (currentIndex === -1) {
+                    currentIndex = INSTRUCTION_FONT_SIZES.indexOf(DEFAULT_INSTRUCTION_FONT);
+                }
+
+                let newIndex = currentIndex + direction;
+                newIndex = Math.max(0, Math.min(INSTRUCTION_FONT_SIZES.length - 1, newIndex)); // Clamp index
+
+                const newClass = INSTRUCTION_FONT_SIZES[newIndex];
+
+                // Update UI
+                instructionInput.classList.remove(...INSTRUCTION_FONT_SIZES);
+                instructionInput.classList.add(newClass);
+
+                // Update data
+                slide.instructionFontSize = newClass;
+                showToast('Instruction font size updated!', 1500);
+            }
+
+            instructionSizeUpBtn.addEventListener('click', () => changeInstructionFontSize(1));
+            instructionSizeDownBtn.addEventListener('click', () => changeInstructionFontSize(-1));
+
+            // --- NEW: Read Aloud (TTS) Logic ---
+            function stopCurrentAudio() {
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio.currentTime = 0;
+                    currentAudio = null;
+                }
+            }
+
+            async function fetchTTSAudio(text) {
+                const apiKey = ""; // Will be provided by the environment
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+
+                const payload = {
+                    contents: [{
+                        parts: [{ text: `Say in a clear, friendly voice for a child: ${text}` }]
+                    }],
+                    generationConfig: {
+                        responseModalities: ["AUDIO"],
+                        speechConfig: {
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: "Aoede" } // "Aoede" (Breezy) is good for kids
+                            }
+                        }
+                    },
+                    model: "gemini-2.5-flash-preview-tts"
+                };
+
+                let response;
+                // Implement exponential backoff for API calls
+                for (let i = 0; i < 5; i++) {
+                    try {
+                        response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.ok) {
+                            break; // Success
+                        }
+
+                        if (response.status === 429 || response.status >= 500) {
+                            // Throttling or server error, wait and retry
+                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        } else {
+                            // Other client-side error, don't retry
+                            throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                        }
+                    } catch (error) {
+                        if (i === 4) { // Last retry failed
+                            throw error;
+                        }
+                        // Do not log retry errors
+                    }
+                }
+
+                if (!response || !response.ok) {
+                    throw new Error(`Failed to fetch TTS audio after retries.`);
+                }
+
+                const result = await response.json();
+                const part = result?.candidates?.[0]?.content?.parts?.[0];
+                const audioData = part?.inlineData?.data;
+                const mimeType = part?.inlineData?.mimeType;
+
+                if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
+                    const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1], 10);
+                    const pcmData = base64ToArrayBuffer(audioData);
+                    const pcm16 = new Int16Array(pcmData);
+                    const wavBlob = pcmToWav(pcm16, sampleRate);
+                    return URL.createObjectURL(wavBlob);
+                } else {
+                    throw new Error("Invalid or missing audio data in response.");
+                }
+            }
+
+            async function handleReadAloudClick() {
+                const text = instructionInput.value;
+                if (!text || text.trim() === '') {
+                    showToast("There's no instruction to read!", 2000);
+                    return;
+                }
+
+                stopCurrentAudio(); // Stop any previous audio
+
+                readAloudIcon.classList.add('hidden');
+                readAloudSpinner.classList.remove('hidden');
+                readAloudBtn.disabled = true;
+
+                try {
+                    const audioUrl = await fetchTTSAudio(text);
+                    currentAudio = new Audio(audioUrl);
+                    currentAudio.play();
+
+                    currentAudio.onended = () => {
+                        stopCurrentAudio();
+                        readAloudIcon.classList.remove('hidden');
+                        readAloudSpinner.classList.add('hidden');
+                        readAloudBtn.disabled = false;
+                        URL.revokeObjectURL(audioUrl);
+                    };
+                    
+                    currentAudio.onerror = () => {
+                        console.error("Error playing audio file.");
+                        showToast("Sorry, an error occurred while playing the audio.", 3000);
+                        stopCurrentAudio();
+                        readAloudIcon.classList.remove('hidden');
+                        readAloudSpinner.classList.add('hidden');
+                        readAloudBtn.disabled = false;
+                    }
+
+                } catch (error) {
+                    console.error("Error fetching TTS:", error);
+                    showToast("Sorry, I can't read that right now. Please try again.", 3000);
+                    readAloudIcon.classList.remove('hidden');
+                    readAloudSpinner.classList.add('hidden');
+                    readAloudBtn.disabled = false;
+                }
+            }
+            // --- END Read Aloud (TTS) Logic ---
+            
+            readAloudBtn.addEventListener('click', handleReadAloudClick);
+            
+            // --- END NEW Instruction Font Size Logic ---
 
 
             window.addEventListener('resize', resizeCanvasAndPath);
