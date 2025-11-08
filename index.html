@@ -90,25 +90,17 @@
 
 
             // --- ENVIRONMENT VARIABLES (MANDATORY USE) ---
-            // TODO: PASTE YOUR FIREBASE CONFIG FROM YOUR PROJECT HERE
-            // Get this from your Firebase project settings (Project Overview > Project settings > Your apps)
-            const firebaseConfig = {
-  apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
-  authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
-  projectId: "unboxing-ct--mat-generator",
-  storageBucket: "unboxing-ct--mat-generator.firebasestorage.app",
-  messagingSenderId: "169453856176",
-  appId: "1:169453856176:web:3fe35bf413fa89915ea275",
-  measurementId: "G-3F5PGB128B"
-};
+            // These are provided by the environment when run in the platform.
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            // END OF ENVIRONMENT VARIABLES
+            
+            // NOTE: appId is removed as it's not needed for Netlify deployment.
+            // All database paths have been simplified.
 
-// This line MUST come AFTER the config object
-const appId = firebaseConfig.projectId;
-
-// This is our app's code, it comes AFTER your config
-let app, auth, db;
-let currentUserId = null;
-let lessonCache = [];
+            let app, auth, db;
+            let currentUserId = null;
+            let lessonCache = [];
 
             // --- GET DOM REFERENCES HERE (AFTER DOMContentLoaded) ---
             const loginBtn = document.getElementById('login-btn');
@@ -275,7 +267,7 @@ let lessonCache = [];
 
                 // Make services available to the main app script
                 // REMOVED 'appId' from this object
-                window.firebaseServices = { db, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides };
+                window.firebaseServices = { db, appId, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides };
 
                 // --- FIREBASE AUTHENTICATION (The "Bouncer") ---
                 onAuthStateChanged(auth, (user) => {
@@ -291,9 +283,12 @@ let lessonCache = [];
                         currentUserId = null;
                         showLoggedOutUI();
 
-                        // FIX: For Netlify, we don't have a custom token.
-                        // We just sign in non-logged-in users (students) anonymously.
-                        signInAnonymously(auth).catch(handleAuthError);
+                        // FIX: Use the provided token if available, otherwise sign in anonymously
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            signInWithCustomToken(auth, __initial_auth_token).catch(handleAuthError);
+                        } else {
+                            signInAnonymously(auth).catch(handleAuthError);
+                        }
                     }
                     updateGalleryButtonState();
                 });
@@ -307,8 +302,8 @@ let lessonCache = [];
 
                     myLessonsList.innerHTML = '<p class="text-gray-500">Loading lessons...</p>';
 
-                    // Path to the teacher's private lesson collection (Simplified)
-                    const lessonsCollectionPath = `users/${userId}/lessons`;
+                    // Path to the teacher's private lesson collection (Restored platform path)
+                    const lessonsCollectionPath = `artifacts/${appId}/users/${userId}/lessons`;
                     const q = query(collection(db, lessonsCollectionPath));
 
                     onSnapshot(q, (querySnapshot) => {
@@ -406,8 +401,8 @@ let lessonCache = [];
                     }
 
                     const lessonData = window.beebotApp.getLessonData();
-                    // Simplified path
-                    const lessonsCollectionPath = `users/${currentUserId}/lessons`;
+                    // Restored platform path
+                    const lessonsCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
 
                     // --- IMAGE COMPRESSION STEP ---
                     // Create a deep copy to avoid modifying the in-memory lesson
@@ -482,10 +477,18 @@ let lessonCache = [];
                         return;
                     }
 
-                    // Simplified path
-                    const publicCollectionPath = `public/shared-lessons`;
-                    // Simplified path
-                    const privateLessonRef = doc(db, `users/${currentUserId}/lessons/${lessonId}`);
+                    // *** PATH FIX ***
+                    // Restored platform path & fixed "public/" to "public-data/"
+                    const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
+                    // Restored platform path
+                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
+
+                    // Find the lesson in cache to get its data (added this)
+                    const lesson = lessonCache.find(l => l.id === lessonId);
+                    if (!lesson) {
+                        window.beebotApp.showToast("Error: Lesson not found in cache.", 3000);
+                        return;
+                    }
 
                     try {
                         // --- 1. Create public lesson metadata ---
@@ -538,8 +541,9 @@ let lessonCache = [];
                     submissionsModal.classList.remove('hidden');
 
                     try {
-                        // Simplified path
-                        const submissionsCollectionPath = `public/student-submissions`;
+                        // *** PATH FIX ***
+                        // Restored platform path & fixed "public/" to "public-data/"
+                        const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
                         const q = query(
                             collection(db, submissionsCollectionPath),
                             where("lessonId", "==", sharedLessonId)
@@ -719,8 +723,9 @@ let lessonCache = [];
                         viewWorkSlideControls.classList.add('hidden'); // Hide controls until data is ready
 
                         // 1. Fetch Lesson Config Metadata
-                        // Simplified path
-                        const lessonDocPath = `public/shared-lessons/${sharedLessonId}`;
+                        // *** PATH FIX ***
+                        // Restored platform path & fixed "public/" to "public-data/"
+                        const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${sharedLessonId}`;
                         const lessonDocRef = doc(db, lessonDocPath);
                         const lessonDoc = await getDoc(lessonDocRef);
 
@@ -773,10 +778,11 @@ let lessonCache = [];
                     if (!currentUserId) return;
 
                     const newStatus = !currentStatus;
-                    // Simplified path
-                    const publicLessonRef = doc(db, `public/shared-lessons/${sharedId}`);
-                    // Simplified path
-                    const privateLessonRef = doc(db, `users/${currentUserId}/lessons/${privateId}`);
+                    // *** PATH FIX ***
+                    // Restored platform path & fixed "public/" to "public-data/"
+                    const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${sharedId}`);
+                    // Restored platform path
+                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${privateId}`);
 
                     try {
                         // Update both public and private docs
@@ -799,8 +805,9 @@ let lessonCache = [];
                     galleryList.innerHTML = '<p class="text-gray-500">Loading public lessons...</p>';
 
                     try {
-                        // Simplified path
-                        const publicCollectionPath = `public/shared-lessons`;
+                        // *** PATH FIX ***
+                        // Restored platform path & fixed "public/" to "public-data/"
+                        const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
                         const q = query(
                             collection(db, publicCollectionPath),
                             where("isPublic", "==", true)
@@ -879,8 +886,9 @@ let lessonCache = [];
                     }
 
                     try {
-                        // Simplified path
-                        const publicLessonRef = doc(db, `public/shared-lessons/${publicId}`);
+                        // *** PATH FIX ***
+                        // Restored platform path & fixed "public/" to "public-data/"
+                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${publicId}`);
                         const publicDoc = await getDoc(publicLessonRef);
 
                         if (!publicDoc.exists()) {
@@ -888,8 +896,8 @@ let lessonCache = [];
                         }
 
                         const publicLesson = publicDoc.data();
-                        // Simplified path
-                        const privateCollectionPath = `users/${currentUserId}/lessons`;
+                        // Restored platform path
+                        const privateCollectionPath = `artifacts/${appId}/users/${currentUserId}/lessons`;
 
                         // --- 1. Create the new private lesson metadata ---
                         const docRef = await addDoc(collection(db, privateCollectionPath), {
@@ -935,8 +943,9 @@ let lessonCache = [];
                     const lesson = lessonCache.find(l => l.id === lessonId);
                     
                     if (lesson && lesson.sharedLessonId) {
-                        // Simplified path
-                        const publicLessonRef = doc(db, `public/shared-lessons/${lesson.sharedLessonId}`);
+                        // *** PATH FIX ***
+                        // Restored platform path & fixed "public/" to "public-data/"
+                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${lesson.sharedLessonId}`);
                         const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
                         try {
                             // Delete public slides first
@@ -949,8 +958,8 @@ let lessonCache = [];
                         }
                     }
 
-                    // Simplified path
-                    const privateLessonRef = doc(db, `users/${currentUserId}/lessons/${lessonId}`);
+                    // Restored platform path
+                    const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
                     const privateSlidesRef = collection(db, `${privateLessonRef.path}/slides`);
 
                     try {
@@ -972,8 +981,8 @@ let lessonCache = [];
                         return;
                     }
 
-                    // Simplified path
-                    const lessonDocRef = doc(db, `users/${currentUserId}/lessons/${lessonId}`);
+                    // Restored platform path
+                    const lessonDocRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
                     
                     try {
                         const lessonData = await window.firebaseServices.loadLessonSlides(lessonDocRef);
@@ -1006,8 +1015,8 @@ let lessonCache = [];
                     }
 
                     const encodedKey = btoa(key);
-                    // Simplified path
-                    const settingsDocPath = `users/${currentUserId}/settings/main`;
+                    // Restored platform path
+                    const settingsDocPath = `artifacts/${appId}/users/${currentUserId}/settings/main`;
 
                     try {
                         await setDoc(doc(db, settingsDocPath), {
@@ -1026,8 +1035,8 @@ let lessonCache = [];
                 async function getApiKey() {
                     if (!currentUserId) return null;
 
-                    // Simplified path
-                    const settingsDocPath = `users/${currentUserId}/settings/main`;
+                    // Restored platform path
+                    const settingsDocPath = `artifacts/${appId}/users/${currentUserId}/settings/main`;
 
                     try {
                         const docSnap = await getDoc(doc(db, settingsDocPath));
@@ -2241,8 +2250,9 @@ let lessonCache = [];
             async function loadStudentLessonFromShare(lessonId) {
                 const { db, getDoc, doc } = window.firebaseServices;
                 try {
-                    // Simplified path
-                    const lessonDocPath = `public/shared-lessons/${lessonId}`;
+                    // *** PATH FIX ***
+                    // Restored platform path & fixed "public/" to "public-data/"
+                    const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${lessonId}`;
                     const lessonDocRef = doc(db, lessonDocPath);
                     const lessonDoc = await getDoc(lessonDocRef);
 
@@ -3061,8 +3071,9 @@ let lessonCache = [];
                     const auth = getAuth();
                     const userId = auth.currentUser ? auth.currentUser.uid : 'anonymous-' + crypto.randomUUID();
 
-                    // Simplified path
-                    const submissionsCollectionPath = `public/student-submissions`;
+                    // *** PATH FIX ***
+                    // Restored platform path & fixed "public/" to "public-data/"
+                    const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
 
                     const docRef = await addDoc(collection(db, submissionsCollectionPath), {
                         studentName: studentName,
