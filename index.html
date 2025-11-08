@@ -91,16 +91,23 @@
 
             // --- ENVIRONMENT VARIABLES (MANDATORY USE) ---
             // These are provided by the environment when run in the platform.
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            // END OF ENVIRONMENT VARIABLES
-            
-            // NOTE: appId is removed as it's not needed for Netlify deployment.
-            // All database paths have been simplified.
+           const firebaseConfig = {
+  apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
+  authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
+  projectId: "unboxing-ct--mat-generator",
+  storageBucket: "unboxing-ct--mat-generator.firebasestorage.app",
+  messagingSenderId: "169453856176",
+  appId: "1:169453856176:web:3fe35bf413fa89915ea275",
+  measurementId: "G-3F5PGB128B"
+};
 
-            let app, auth, db;
-            let currentUserId = null;
-            let lessonCache = [];
+// This line MUST come AFTER the config object
+const appId = firebaseConfig.projectId;
+
+// This is our app's code, it comes AFTER your config
+let app, auth, db;
+let currentUserId = null;
+let lessonCache = [];
 
             // --- GET DOM REFERENCES HERE (AFTER DOMContentLoaded) ---
             const loginBtn = document.getElementById('login-btn');
@@ -3751,3 +3758,4 @@
     </script>
 </body>
 </html>
+
