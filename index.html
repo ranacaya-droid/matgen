@@ -590,7 +590,13 @@ let lessonCache = [];
                 async function viewSubmissions(sharedLessonId, lessonName) {
                     submissionsLessonName.textContent = lessonName;
                     submissionsList.innerHTML = '<p class="text-gray-500">Loading submissions...</p>';
-                        galleryList.innerHTML = '<p class="text-gray-500">Loading public lessons...</p>';
+                    
+                    // --- FIX: The modal needs to be shown! ---
+                    // This line was missing, which is why "nothing happened" when you clicked.
+                    submissionsModal.classList.remove('hidden');
+                    // --- END FIX ---
+                    
+                    // --- (Removed a stray line of code here that was clearing the gallery list by mistake) ---
 
                     try {
                         // *** PATH FIX ***
@@ -2216,61 +2222,10 @@ let lessonCache = [];
         // --- GLOBAL APP LOGIC ---
         window.beebotApp = (function() {
 
-            // --- NEW: Audio Helper Functions ---
-            function base64ToArrayBuffer(base64) {
-                const binaryString = window.atob(base64);
-                const len = binaryString.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                return bytes.buffer;
-            }
-
-            function pcmToWav(pcmData, sampleRate) {
-                const numSamples = pcmData.length;
-                const numChannels = 1;
-                const bitsPerSample = 16;
-                const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
-                const blockAlign = numChannels * (bitsPerSample / 8);
-                const dataSize = numSamples * numChannels * (bitsPerSample / 8);
-                const buffer = new ArrayBuffer(44 + dataSize);
-                const view = new DataView(buffer);
-
-                // RIFF header
-                writeString(view, 0, 'RIFF');
-                view.setUint32(4, 36 + dataSize, true);
-                writeString(view, 8, 'WAVE');
-
-                // fmt chunk
-                writeString(view, 12, 'fmt ');
-                view.setUint32(16, 16, true); // Sub-chunk size (16 for PCM)
-                view.setUint16(20, 1, true); // Audio format (1 for PCM)
-                view.setUint16(22, numChannels, true);
-                view.setUint32(24, sampleRate, true);
-                view.setUint32(28, byteRate, true);
-                view.setUint16(32, blockAlign, true);
-                view.setUint16(34, bitsPerSample, true);
-
-                // data chunk
-                writeString(view, 36, 'data');
-                view.setUint32(40, dataSize, true);
-
-                // Write PCM data
-                let offset = 44;
-                for (let i = 0; i < numSamples; i++, offset += 2) {
-                    view.setInt16(offset, pcmData[i], true);
-                }
-
-                return new Blob([view], { type: 'audio/wav' });
-            }
-
-            function writeString(view, offset, string) {
-                for (let i = 0; i < string.length; i++) {
-                    view.setUint8(offset + i, string.charCodeAt(i));
-                }
-            }
-            // --- END NEW Audio Helper Functions ---
+            // --- REMOVED: Google AI TTS Audio Helper Functions ---
+            // The functions base64ToArrayBuffer, pcmToWav, and writeString
+            // have been removed as they are no longer needed.
+            // --- END REMOVED ---
 
             // --- DOM Elements ---
             const homePage = document.getElementById('home-page');
@@ -2387,15 +2342,15 @@ let lessonCache = [];
             let isExecuting = false;
             let selectedCell = null;
             let pathHistory = [];
-            let gameMode = 'image'; // 'image', 'text', 'ai', 'unbox'
-            let customBeeImageUrl = null;
+            const customBeeImageUrl = null;
             let isStudentMode = false;
             let studentWork = [];
             let studentName = null;
             let currentStudentLessonId = null;
 
-            // --- NEW: Audio State ---
-            let currentAudio = null;
+            // --- REMOVED: Google AI TTS Audio State ---
+            // let currentAudio = null;
+            // --- END REMOVED ---
 
             // --- NEW: Instruction Font Size Constants ---
             const INSTRUCTION_FONT_SIZES = ['text-sm', 'text-base', 'text-lg', 'text-xl', 'text-2xl', 'text-3xl', 'text-4xl', 'text-5xl'];
@@ -2660,7 +2615,9 @@ let lessonCache = [];
             function loadSlide(index) {
                 if (index < 0 || index >= lessonData.length) return;
 
-                stopCurrentAudio(); // <-- ADD THIS
+                // --- MODIFIED: Use browser's speech synthesis cancel ---
+                window.speechSynthesis.cancel(); // Stop any speaking
+                // --- END MODIFIED ---
 
                 currentSlideIndex = index;
                 const slide = lessonData[currentSlideIndex];
@@ -2990,7 +2947,9 @@ let lessonCache = [];
             function stopExecution() {
                 isExecuting = false;
                 document.getElementById('go-btn').disabled = false;
-                stopCurrentAudio(); // <-- ADD THIS
+                // --- MODIFIED: Use browser's speech synthesis cancel ---
+                window.speechSynthesis.cancel(); // Stop any speaking
+                // --- END MODIFIED ---
                 resetBeeToStart();
             }
 
@@ -3807,127 +3766,54 @@ let lessonCache = [];
             instructionSizeDownBtn.addEventListener('click', () => changeInstructionFontSize(-1));
 
             // --- NEW: Read Aloud (TTS) Logic ---
-            function stopCurrentAudio() {
-                if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio.currentTime = 0;
-                    currentAudio = null;
-                }
-            }
-
-            async function fetchTTSAudio(text) {
-                const apiKey = ""; // Will be provided by the environment
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
-
-                const payload = {
-                    contents: [{
-                        parts: [{ text: `Say in a clear, friendly voice for a child: ${text}` }]
-                    }],
-                    generationConfig: {
-                        responseModalities: ["AUDIO"],
-                        speechConfig: {
-                            voiceConfig: {
-                                prebuiltVoiceConfig: { voiceName: "Aoede" } // "Aoede" (Breezy) is good for kids
-                            }
-                        }
-                    },
-                    model: "gemini-2.5-flash-preview-tts"
-                };
-
-                let response;
-                // Implement exponential backoff for API calls
-                for (let i = 0; i < 5; i++) {
-                    try {
-                        response = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-
-                        if (response.ok) {
-                            break; // Success
-                        }
-
-                        if (response.status === 429 || response.status >= 500) {
-                            // Throttling or server error, wait and retry
-                            const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                        } else {
-                            // Other client-side error, don't retry
-                            throw new Error(`API Error: ${response.status} ${response.statusText}`);
-                        }
-                    } catch (error) {
-                        if (i === 4) { // Last retry failed
-                            throw error;
-                        }
-                        // Do not log retry errors
-                    }
-                }
-
-                if (!response || !response.ok) {
-                    throw new Error(`Failed to fetch TTS audio after retries.`);
-                }
-
-                const result = await response.json();
-                const part = result?.candidates?.[0]?.content?.parts?.[0];
-                const audioData = part?.inlineData?.data;
-                const mimeType = part?.inlineData?.mimeType;
-
-                if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
-                    const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1], 10);
-                    const pcmData = base64ToArrayBuffer(audioData);
-                    const pcm16 = new Int16Array(pcmData);
-                    const wavBlob = pcmToWav(pcm16, sampleRate);
-                    return URL.createObjectURL(wavBlob);
-                } else {
-                    throw new Error("Invalid or missing audio data in response.");
-                }
-            }
-
-            async function handleReadAloudClick() {
+            
+            // --- REMOVED: Old, broken Google AI TTS functions (stopCurrentAudio and fetchTTSAudio) ---
+            // These were left over from a previous change and were causing the syntax error.
+            
+            // --- REPLACED: Read Aloud (TTS) Logic ---
+            // This function now uses the browser's built-in SpeechSynthesis API.
+            function handleReadAloudClick() {
                 const text = instructionInput.value;
                 if (!text || text.trim() === '') {
                     showToast("There's no instruction to read!", 2000);
                     return;
                 }
 
-                stopCurrentAudio(); // Stop any previous audio
+                if (!('speechSynthesis' in window)) {
+                    showToast("Your browser doesn't support this feature.", 3000);
+                    return;
+                }
 
+                // Stop any previous speech
+                window.speechSynthesis.cancel();
+
+                // Set UI to loading state
                 readAloudIcon.classList.add('hidden');
                 readAloudSpinner.classList.remove('hidden');
                 readAloudBtn.disabled = true;
 
-                try {
-                    const audioUrl = await fetchTTSAudio(text);
-                    currentAudio = new Audio(audioUrl);
-                    currentAudio.play();
+                const utterance = new SpeechSynthesisUtterance(text);
 
-                    currentAudio.onended = () => {
-                        stopCurrentAudio();
-                        readAloudIcon.classList.remove('hidden');
-                        readAloudSpinner.classList.add('hidden');
-                        readAloudBtn.disabled = false;
-                        URL.revokeObjectURL(audioUrl);
-                    };
-                    
-                    currentAudio.onerror = () => {
-                        console.error("Error playing audio file.");
-                        showToast("Sorry, an error occurred while playing the audio.", 3000);
-                        stopCurrentAudio();
-                        readAloudIcon.classList.remove('hidden');
-                        readAloudSpinner.classList.add('hidden');
-                        readAloudBtn.disabled = false;
-                    }
-
-                } catch (error) {
-                    console.error("Error fetching TTS:", error);
-                    showToast("Sorry, I can't read that right now. Please try again.", 3000);
+                utterance.onend = () => {
+                    // Reset UI when speech finishes
                     readAloudIcon.classList.remove('hidden');
                     readAloudSpinner.classList.add('hidden');
                     readAloudBtn.disabled = false;
-                }
+                };
+
+                utterance.onerror = (event) => {
+                    // Handle any speech errors
+                    console.error("Speech synthesis error:", event.error);
+                    showToast("Sorry, an error occurred while reading.", 3000);
+                    readAloudIcon.classList.remove('hidden');
+                    readAloudSpinner.classList.add('hidden');
+                    readAloudBtn.disabled = false;
+                };
+
+                // Speak the text
+                window.speechSynthesis.speak(utterance);
             }
-            // --- END Read Aloud (TTS) Logic ---
+            // --- END REPLACED Read Aloud (TTS) Logic ---
             
             readAloudBtn.addEventListener('click', handleReadAloudClick);
             
