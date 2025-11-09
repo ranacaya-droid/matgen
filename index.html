@@ -114,10 +114,6 @@ const appId = firebaseConfig.projectId;
 let app, auth, db;
 let currentUserId = null;
 let lessonCache = [];
-
-            let app, auth, db;
-            let currentUserId = null;
-            let lessonCache = [];
             
             // --- NEW: Auth Ready Promise ---
             // This promise will resolve when Firebase auth is confirmed (either logged in or anonymous)
@@ -307,32 +303,34 @@ let lessonCache = [];
                         currentUserId = user.uid;
                         showLoggedInUI(user);
                         loadUserLessons(user.uid);
-                        authReadyResolve(user.uid); // <-- ADDED: Signal that auth is ready
+                        authReadyResolve(user.uid); // Signal that auth is ready
                     } else {
                         // User is logged out.
-                        console.log("User is logged out.");
+                        console.log("User is logged out. Attempting sign-in...");
                         currentUserId = null;
-                        showLoggedOutUI(); // Show "Teacher Login" button.
+                        
+                        // --- FIX for auth/unauthorized-domain ---
+                        // The 'signInWithPopup' method (Google Login) is failing because the
+                        // domain is not authorized in Firebase.
+                        // Instead of showing a broken login button, we will automatically
+                        // sign the user in. The environment provides __initial_auth_token
+                        // for the "teacher" (or any logged-in user), and if not,
+                        // we'll sign in anonymously (for students or guests).
+                        // This will log *everyone* in, hiding the login button and avoiding the error.
 
-                        // Check if this is a student trying to load a lesson
-                        if (studentLessonId_head) { // <-- FIX: Use the global variable from this script
-                            // This is a student. Sign them in anonymously.
-                            console.log("Student lesson detected, signing in anonymously...");
-                            const authPromise = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
-                                ? signInWithCustomToken(auth, __initial_auth_token)
-                                : signInAnonymously(auth);
-                            
-                            authPromise.catch(err => {
-                                handleAuthError(err);
-                                authReadyResolve(null); // Resolve with null on auth *failure*
-                            });
-                            // onAuthStateChanged will fire again on success and run the `if (user)` block.
-                        } else {
-                            // This is a teacher on the homepage. DO NOT log them in.
-                            // Just resolve the auth promise with `null` to signal auth check is complete.
-                            console.log("Teacher homepage, auth ready (no user).");
-                            authReadyResolve(null);
-                        }
+                        const authPromise = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
+                            ? signInWithCustomToken(auth, __initial_auth_token)
+                            : signInAnonymously(auth);
+                        
+                        authPromise.catch(err => {
+                            // If auth fails, show logged out UI.
+                            handleAuthError(err);
+                            showLoggedOutUI(); // Show "Teacher Login" button as a fallback.
+                            authReadyResolve(null); // Resolve with null on auth *failure*
+                        });
+                        
+                        // onAuthStateChanged will fire again on success and run the `if (user)` block.
+                        // If it fails, the catch block above will run.
                     }
                     updateGalleryButtonState();
                 });
@@ -3821,3 +3819,4 @@ let lessonCache = [];
     </script>
 </body>
 </html>
+
