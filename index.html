@@ -91,7 +91,7 @@
 
             // --- ENVIRONMENT VARIABLES (MANDATORY USE) ---
             // These are provided by the environment when run in the platform.
-            const firebaseConfig = {
+           const firebaseConfig = {
   apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
   authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
   projectId: "unboxing-ct--mat-generator",
@@ -108,6 +108,7 @@ const appId = firebaseConfig.projectId;
 let app, auth, db;
 let currentUserId = null;
 let lessonCache = [];
+
             // --- GET DOM REFERENCES HERE (AFTER DOMContentLoaded) ---
             const loginBtn = document.getElementById('login-btn');
             const logoutBtn = document.getElementById('logout-btn-home');
@@ -273,7 +274,7 @@ let lessonCache = [];
 
                 // Make services available to the main app script
                 // REMOVED 'appId' from this object
-                window.firebaseServices = { db, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides, appId };
+                window.firebaseServices = { db, appId, getDoc, doc, addDoc, collection, getAuth: () => auth, getDB: () => db, getApiKey, loadLessonSlides };
 
                 // --- FIREBASE AUTHENTICATION (The "Bouncer") ---
                 onAuthStateChanged(auth, (user) => {
@@ -484,7 +485,7 @@ let lessonCache = [];
                     }
 
                     // *** PATH FIX ***
-                    // Restored platform path & fixed "public/" to "public-data/"
+                    // Restored platform path & fixed "public-data/" to "public/data/"
                     const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
                     // Restored platform path
                     const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${lessonId}`);
@@ -548,7 +549,7 @@ let lessonCache = [];
 
                     try {
                         // *** PATH FIX ***
-                        // Restored platform path & fixed "public/" to "public-data/"
+                        // Restored platform path & fixed "public-data/" to "public/data/"
                         const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
                         const q = query(
                             collection(db, submissionsCollectionPath),
@@ -730,7 +731,7 @@ let lessonCache = [];
 
                         // 1. Fetch Lesson Config Metadata
                         // *** PATH FIX ***
-                        // Restored platform path & fixed "public/" to "public-data/"
+                        // Restored platform path & fixed "public-data/" to "public/data/"
                         const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${sharedLessonId}`;
                         const lessonDocRef = doc(db, lessonDocPath);
                         const lessonDoc = await getDoc(lessonDocRef);
@@ -785,7 +786,7 @@ let lessonCache = [];
 
                     const newStatus = !currentStatus;
                     // *** PATH FIX ***
-                    // Restored platform path & fixed "public/" to "public-data/"
+                    // Restored platform path & fixed "public-data/" to "public/data/"
                     const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${sharedId}`);
                     // Restored platform path
                     const privateLessonRef = doc(db, `artifacts/${appId}/users/${currentUserId}/lessons/${privateId}`);
@@ -812,7 +813,7 @@ let lessonCache = [];
 
                     try {
                         // *** PATH FIX ***
-                        // Restored platform path & fixed "public/" to "public-data/"
+                        // Restored platform path & fixed "public-data/" to "public/data/"
                         const publicCollectionPath = `artifacts/${appId}/public/data/shared-lessons`;
                         const q = query(
                             collection(db, publicCollectionPath),
@@ -893,7 +894,7 @@ let lessonCache = [];
 
                     try {
                         // *** PATH FIX ***
-                        // Restored platform path & fixed "public/" to "public-data/"
+                        // Restored platform path & fixed "public-data/" to "public/data/"
                         const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${publicId}`);
                         const publicDoc = await getDoc(publicLessonRef);
 
@@ -950,7 +951,7 @@ let lessonCache = [];
                     
                     if (lesson && lesson.sharedLessonId) {
                         // *** PATH FIX ***
-                        // Restored platform path & fixed "public/" to "public-data/"
+                        // Restored platform path & fixed "public-data/" to "public/data/"
                         const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${lesson.sharedLessonId}`);
                         const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
                         try {
@@ -2027,8 +2028,6 @@ let lessonCache = [];
 
 
     <script>
-        const { jsPDF } = window.jspdf;
-
         // --- GLOBAL APP LOGIC ---
         window.beebotApp = (function() {
 
@@ -2257,7 +2256,7 @@ let lessonCache = [];
                 const { db, getDoc, doc } = window.firebaseServices;
                 try {
                     // *** PATH FIX ***
-                    // Restored platform path & fixed "public/" to "public-data/"
+                    // Restored platform path & fixed "public-data/" to "public/data/"
                     const lessonDocPath = `artifacts/${appId}/public/data/shared-lessons/${lessonId}`;
                     const lessonDocRef = doc(db, lessonDocPath);
                     const lessonDoc = await getDoc(lessonDocRef);
@@ -2879,6 +2878,9 @@ let lessonCache = [];
                     window.beebotApp.showToast("This feature is for teachers only.", 2000);
                     return;
                 }
+                
+                // FIX: Define jsPDF here
+                const { jsPDF } = window.jspdf;
 
                 showToast('Generating Physical Mat PDF... This may take a moment.', 5000);
 
@@ -3071,14 +3073,14 @@ let lessonCache = [];
 
                 showToast("Submitting your work...", 2000);
 
-                const { db, addDoc, collection, getAuth } = window.firebaseServices;
+                const { db, appId, addDoc, collection, getAuth } = window.firebaseServices;
 
                 try {
                     const auth = getAuth();
                     const userId = auth.currentUser ? auth.currentUser.uid : 'anonymous-' + crypto.randomUUID();
 
                     // *** PATH FIX ***
-                    // Restored platform path & fixed "public/" to "public-data/"
+                    // Restored platform path & fixed "public-data/" to "public/data/"
                     const submissionsCollectionPath = `artifacts/${appId}/public/data/student-submissions`;
 
                     const docRef = await addDoc(collection(db, submissionsCollectionPath), {
@@ -3099,6 +3101,9 @@ let lessonCache = [];
             }
 
             exportReportBtn.addEventListener('click', async () => {
+                // FIX: Define jsPDF here
+                const { jsPDF } = window.jspdf;
+                
                 showToast('Generating report... Please wait.', 5000);
 
                 reportGenerator.innerHTML = '';
@@ -3223,7 +3228,7 @@ let lessonCache = [];
                             if (pathSimState.dir === 2) backRow--;
                             if (pathSimState.dir === 3) backCol++;
 
-                            if (backRow >= 0 && backRow < slide.gridRows && backCol >= 0 && backCol < slide.gridCols) {
+                            if (backRow >= 0 && backRow < slide.gridRows && backCol >= 0 && backCol < gridCols) {
                                 pathSimState.row = backRow;
                                 pathSimState.col = backCol;
                                 tempCtx.lineTo(pathSimState.col * cellW + cellW / 2, pathSimState.row * cellH + cellH / 2);
