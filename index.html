@@ -105,7 +105,7 @@
 
             // --- ENVIRONMENT VARIABLES (MANDATORY USE) ---
             // These are provided by the environment when run in the platform.
-           const firebaseConfig = {
+          const firebaseConfig = {
   apiKey: "AIzaSyA4VjMrkHhZ-rHr32-iziPPiBoL4JGkjjw",
   authDomain: "unboxing-ct--mat-generator.firebaseapp.com",
   projectId: "unboxing-ct--mat-generator",
@@ -2342,7 +2342,9 @@ let lessonCache = [];
             let isExecuting = false;
             let selectedCell = null;
             let pathHistory = [];
-            const customBeeImageUrl = null;
+            // --- FIX: This must be a 'let' to be reassigned when loading lessons ---
+            let customBeeImageUrl = null;
+            // --- END FIX ---
             let isStudentMode = false;
             let studentWork = [];
             let studentName = null;
