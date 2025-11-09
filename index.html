@@ -27,6 +27,14 @@
         // CRITICAL FIX: All DOM manipulation MUST be inside DOMContentLoaded
         document.addEventListener('DOMContentLoaded', () => {
 
+            // --- ADMIN FEATURE: SET YOUR ADMIN ID ---
+            // 1. Log in to your site as a teacher.
+            // 2. Open the browser console (F12) and look for the log "User is logged in: [YOUR_ID]".
+            // 3. Copy that ID and paste it here, replacing the placeholder.
+            const ADMIN_USER_ID = "5qB8PRjsLtTtnWYqkKJRx3wNGc52";
+            // --- END ADMIN FEATURE ---
+
+
             // --- NEW HELPER FUNCTION: Image Resizing ---
             /**
              * Resizes a base64 image to a max width/height to save storage space.
@@ -582,7 +590,7 @@ let lessonCache = [];
                 async function viewSubmissions(sharedLessonId, lessonName) {
                     submissionsLessonName.textContent = lessonName;
                     submissionsList.innerHTML = '<p class="text-gray-500">Loading submissions...</p>';
-                    submissionsModal.classList.remove('hidden');
+                        galleryList.innerHTML = '<p class="text-gray-500">Loading public lessons...</p>';
 
                     try {
                         // *** PATH FIX ***
@@ -613,14 +621,29 @@ let lessonCache = [];
                             info.className = "font-semibold";
                             el.appendChild(info);
 
+                            // --- BUTTON CONTAINER (for flex layout) ---
+                            const btnContainer = document.createElement('div');
+
                             const viewBtn = document.createElement('button');
                             viewBtn.textContent = 'View Work';
                             viewBtn.className = "view-work-btn bg-blue-500 hover:bg-blue-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow";
                             viewBtn.dataset.work = submission.work; // JSON string
                             viewBtn.dataset.studentName = submission.studentName || 'Anonymous';
                             viewBtn.dataset.sharedLessonId = sharedLessonId;
-                            el.appendChild(viewBtn);
+                            btnContainer.appendChild(viewBtn);
 
+                            // --- NEW: Add Delete Button for Submission ---
+                            const deleteBtn = document.createElement('button');
+                            deleteBtn.textContent = 'Delete';
+                            deleteBtn.className = "delete-submission-btn bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-1 px-3 rounded-md shadow ml-2";
+                            deleteBtn.dataset.submissionId = doc.id;
+                            deleteBtn.title = "Delete this submission";
+                            btnContainer.appendChild(deleteBtn);
+                            // --- END NEW ---
+
+                            el.appendChild(btnContainer);
+                            // --- END BUTTON CONTAINER ---
+                            
                             submissionsList.appendChild(el);
                         });
 
@@ -817,6 +840,42 @@ let lessonCache = [];
                     }
                 }
 
+                // --- NEW: 5.b. DELETE A SUBMISSION ---
+                async function deleteSubmission(submissionId) {
+                    if (!currentUserId) {
+                        window.beebotApp.showToast("You must be logged in.", 3000);
+                        return;
+                    }
+
+                    try {
+                        // Path to the public submission document
+                        const submissionDocPath = `artifacts/${appId}/public/data/student-submissions/${submissionId}`;
+                        const submissionDocRef = doc(db, submissionDocPath);
+
+                        await deleteDoc(submissionDocRef);
+                        
+                        window.beebotApp.showToast("Submission deleted.", 2000);
+                        
+                        // Remove the element from the list
+                        const button = submissionsList.querySelector(`button[data-submission-id="${submissionId}"]`);
+                        if (button) {
+                            // Find the parent 'div' container (the 'el' variable from viewSubmissions) and remove it
+                            button.closest('.flex.justify-between.items-center').remove();
+                        }
+                        
+                        // Check if the list is now empty
+                        if (submissionsList.children.length === 0) {
+                                submissionsList.innerHTML = '<p class="text-gray-500">No submissions found for this lesson yet.</p>';
+                        }
+
+                    } catch (e) {
+                        console.error("Error deleting submission:", e);
+                        window.beebotApp.showToast(`Error deleting: ${e.message}`, 3000);
+                    }
+                }
+                // --- END NEW FUNCTION ---
+
+
                 // 6. TOGGLE PUBLIC STATUS (Updated to use metadata only)
                 async function toggleLessonPublic(privateId, sharedId, currentStatus) {
                     if (!currentUserId) return;
@@ -892,6 +951,17 @@ let lessonCache = [];
                                 cloneBtn.classList.add('opacity-50', 'cursor-not-allowed');
                             }
                             el.appendChild(cloneBtn);
+
+                            // --- ADMIN FEATURE: Add Admin Delete Button ---
+                            if (currentUserId === ADMIN_USER_ID) {
+                                const adminDeleteBtn = document.createElement('button');
+                                adminDeleteBtn.textContent = 'Admin Delete';
+                                adminDeleteBtn.className = "admin-delete-btn bg-red-700 hover:bg-red-800 text-white text-sm font-bold py-1 px-3 rounded-md shadow ml-2";
+                                adminDeleteBtn.dataset.publicId = lesson.id;
+                                adminDeleteBtn.title = `Admin: Delete this public lesson (ID: ${lesson.id})`;
+                                el.appendChild(adminDeleteBtn);
+                            }
+                            // --- END ADMIN FEATURE ---
 
                             galleryList.appendChild(el);
                         });
@@ -978,6 +1048,67 @@ let lessonCache = [];
                         window.beebotApp.showToast(`Error cloning lesson: ${e.message}`, 3000);
                     }
                 }
+
+                // --- ADMIN FEATURE: New function to delete any public lesson ---
+                async function deletePublicLesson(publicLessonId) {
+                    if (currentUserId !== ADMIN_USER_ID) {
+                        window.beebotApp.showToast("This action is for admins only.", 3000);
+                        return;
+                    }
+
+                    try {
+                        // 1. Get reference to the public lesson
+                        const publicLessonRef = doc(db, `artifacts/${appId}/public/data/shared-lessons/${publicLessonId}`);
+                        const publicDoc = await getDoc(publicLessonRef);
+
+                        if (!publicDoc.exists()) {
+                            throw new Error("Public lesson not found.");
+                        }
+
+                        // 2. Find and update the original teacher's private lesson to "unlink" it
+                        const publicData = publicDoc.data();
+                        const teacherId = publicData.teacherId;
+
+                        if (teacherId) {
+                            const privateCollectionPath = `artifacts/${appId}/users/${teacherId}/lessons`;
+                            const q = query(collection(db, privateCollectionPath), where("sharedLessonId", "==", publicLessonId));
+                            const privateSnapshot = await getDocs(q);
+
+                            if (!privateSnapshot.empty) {
+                                const privateDocRef = privateSnapshot.docs[0].ref;
+                                // Unlink the lesson, setting it back to unpublished and unshared
+                                await updateDoc(privateDocRef, {
+                                    isPublic: false,
+                                    sharedLessonId: null
+                                });
+                                console.log("Unlinked private lesson for teacher:", teacherId);
+                            } else {
+                                console.warn("Could not find matching private lesson to unlink for teacher:", teacherId);
+                            }
+                        } else {
+                            console.warn("Public lesson is missing a teacherId, cannot unlink.");
+                        }
+
+                        // 3. Delete the public lesson's 'slides' subcollection
+                        const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
+                        await deleteCollection(publicSlidesRef);
+                        console.log("Deleted public slides subcollection.");
+
+                        // 4. Delete the main public lesson document
+                        await deleteDoc(publicLessonRef);
+                        console.log("Deleted public lesson metadata.");
+
+                        window.beebotApp.showToast("Admin: Public lesson successfully deleted.");
+
+                        // 5. Refresh the gallery list
+                        loadPublicGallery();
+
+                    } catch (e) {
+                        console.error("Error during admin delete:", e);
+                        window.beebotApp.showToast(`Error deleting lesson: ${e.message}`, 3000);
+                    }
+                }
+                // --- END ADMIN FEATURE ---
 
 
                 // 10. DELETE a specific lesson (CRITICAL FIX: Deletes the slides subcollection)
@@ -1196,6 +1327,12 @@ let lessonCache = [];
 
                         visualizeStudentWork(sharedLessonId, work);
                     }
+                    // --- NEW: Handle Submission Delete ---
+                    else if (e.target.classList.contains('delete-submission-btn')) {
+                        const submissionId = e.target.dataset.submissionId;
+                        deleteSubmission(submissionId);
+                    }
+                    // --- END NEW ---
                 });
 
                 closeViewWorkModalBtn.addEventListener('click', () => viewWorkModal.classList.add('hidden'));
@@ -1233,6 +1370,11 @@ let lessonCache = [];
                     if (e.target.classList.contains('clone-lesson-btn')) {
                         cloneLesson(e.target.dataset.publicId);
                     }
+                    // --- ADMIN FEATURE: Handle Admin Delete click ---
+                    else if (e.target.classList.contains('admin-delete-btn')) {
+                        deletePublicLesson(e.target.dataset.publicId);
+                    }
+                    // --- END ADMIN FEATURE ---
                 });
 
                 const openSettings = async () => {
@@ -3289,7 +3431,7 @@ let lessonCache = [];
 
                             if (backRow >= 0 && backRow < slide.gridRows && backCol >= 0 && backCol < gridCols) {
                                 pathSimState.row = backRow;
-                                pathSimState.col = backCol;
+                                pathSimState.col = newCol;
                                 tempCtx.lineTo(pathSimState.col * cellW + cellW / 2, pathSimState.row * cellH + cellH / 2);
                             }
                         } else if (cmd === 'L') {
@@ -3821,5 +3963,3 @@ let lessonCache = [];
     </script>
 </body>
 </html>
-
-
