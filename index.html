@@ -2246,13 +2246,14 @@ let lessonCache = [];
                     // CRITICAL FIX: Ensure loadLessonSlides is available on firebaseServices
                     if (window.firebaseServices && window.firebaseServices.loadLessonSlides) {
                         clearInterval(checkFirebase);
-                        loadStudentLessonFromShare(studentLessonId);
+                        // We get 'appId' from the global service object and pass it in
+                        loadStudentLessonFromShare(studentLessonId, window.firebaseServices.appId);
                     }
                 }, 100);
             }
 
             // CRITICAL FIX: Function updated to fetch metadata AND slides from subcollection
-            async function loadStudentLessonFromShare(lessonId) {
+            async function loadStudentLessonFromShare(lessonId, appId) {
                 const { db, getDoc, doc } = window.firebaseServices;
                 try {
                     // *** PATH FIX ***
@@ -3762,3 +3763,4 @@ let lessonCache = [];
     </script>
 </body>
 </html>
+
