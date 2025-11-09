@@ -1074,7 +1074,7 @@ let lessonCache = [];
                         // 2. Find and update the original teacher's private lesson to "unlink" it
                         const publicData = publicDoc.data();
                         const teacherId = publicData.teacherId;
-
+/*
                         if (teacherId) {
                             const privateCollectionPath = `artifacts/${appId}/users/${teacherId}/lessons`;
                             const q = query(collection(db, privateCollectionPath), where("sharedLessonId", "==", publicLessonId));
@@ -1094,7 +1094,7 @@ let lessonCache = [];
                         } else {
                             console.warn("Public lesson is missing a teacherId, cannot unlink.");
                         }
-
+*/
                         // 3. Delete the public lesson's 'slides' subcollection
                         const publicSlidesRef = collection(db, `${publicLessonRef.path}/slides`);
                         await deleteCollection(publicSlidesRef);
@@ -3851,3 +3851,4 @@ let lessonCache = [];
     </script>
 </body>
 </html>
+
