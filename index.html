@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Bee-Bot Mat</title>
+    <title>Mat-Generator by UnboxingCT</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -706,15 +706,10 @@ let lessonCache = [];
                         }
                     }
                     
-                    // --- Get canvas context and resize ---
-                    const rect = viewWorkGrid.getBoundingClientRect();
-                    const canvas = viewWorkCanvas;
-                    canvas.width = rect.width;
-                    canvas.height = rect.height;
-                    const ctx = canvas.getContext('2d');
-                    
                     // 4. Draw the path on the canvas (Simulation)
                     requestAnimationFrame(() => {
+                        const canvas = viewWorkCanvas;
+                        const ctx = canvas.getContext('2d');
                         const cellWidth = canvas.width / gridCols;
                         const cellHeight = canvas.height / gridCols;
 
@@ -2350,6 +2345,10 @@ let lessonCache = [];
             let studentName = null;
             let currentStudentLessonId = null;
 
+            // --- NEW STATE: Track the visual rotation angle for custom images ---
+            let visualRotationAngle = 0;
+            // --- END NEW STATE ---
+
             // --- REMOVED: Google AI TTS Audio State ---
             // let currentAudio = null;
             // --- END REMOVED ---
@@ -2469,6 +2468,9 @@ let lessonCache = [];
                         customBeeImageUrl = e.target.result;
                         beeStatus.textContent = file.name;
                         beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
+                        // Reset visual rotation to 0 when a new image is loaded
+                        visualRotationAngle = 0;
+                        updateBeebotPosition(beebotState, true); // Force reset view
                     }
                     reader.readAsDataURL(file);
                 }
@@ -2496,6 +2498,9 @@ let lessonCache = [];
                 if (customBeeImageUrl) {
                     beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
                 }
+                
+                // Reset visual rotation state
+                visualRotationAngle = 0;
 
                 document.querySelectorAll('.teacher-only').forEach(el => el.classList.remove('hidden'));
                 studentControls.classList.add('hidden');
@@ -2534,6 +2539,9 @@ let lessonCache = [];
                     customBeeImageUrl = config.customBeeImageUrl;
                     beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
                 }
+                
+                // Reset visual rotation state
+                visualRotationAngle = 0;
 
                 textEditControls.classList.add('hidden');
                 document.querySelectorAll('.teacher-only').forEach(el => el.classList.add('hidden'));
@@ -2571,6 +2579,9 @@ let lessonCache = [];
                     customBeeImageUrl = config.customBeeImageUrl;
                     beebot.style.backgroundImage = `url(${customBeeImageUrl})`;
                 }
+
+                // Reset visual rotation state
+                visualRotationAngle = 0;
 
                 document.querySelectorAll('.teacher-only').forEach(el => el.classList.remove('hidden'));
                 studentControls.classList.add('hidden');
@@ -2941,7 +2952,16 @@ let lessonCache = [];
                 const initialState = lessonData[currentSlideIndex].initialBeebotState;
                 beebotState = { ...initialState };
                 pathHistory = [{ ...beebotState }];
-                updateBeebotPosition();
+                
+                // If using a custom image, reset visual rotation angle to 0 degrees for start position
+                if (customBeeImageUrl) {
+                    visualRotationAngle = 0;
+                } else {
+                    // Default Bee-Bot uses internal direction for rotation when reset
+                    visualRotationAngle = (beebotState.dir * 90) - 90;
+                }
+                
+                updateBeebotPosition(beebotState, true); 
                 updateBeeBotInfo();
                 redrawFullPath();
             }
@@ -2969,6 +2989,7 @@ let lessonCache = [];
 
                         const oldPos = { ...beebotState };
                         let moved = false;
+                        let rotated = false;
                         let waitTime = 500;
 
                         switch(cmd) {
@@ -3002,13 +3023,18 @@ let lessonCache = [];
                                 break;
                             case 'L':
                                 beebotState.dir = (oldPos.dir + 3) % 4;
+                                visualRotationAngle -= 90; // Decrement visual angle
+                                rotated = true;
                                 break;
                             case 'R':
                                 beebotState.dir = (oldPos.dir + 1) % 4;
+                                visualRotationAngle += 90; // Increment visual angle
+                                rotated = true;
                                 break;
                         }
 
-                        updateBeebotPosition();
+                        // Pass 'rotated' flag to updateBeebotPosition
+                        updateBeebotPosition(beebotState, false, rotated); 
                         await new Promise(resolve => setTimeout(resolve, waitTime));
 
                         if (moved) {
@@ -3452,11 +3478,16 @@ let lessonCache = [];
                 const rect = gridContainer.getBoundingClientRect();
                 pathCanvas.width = rect.width;
                 pathCanvas.height = rect.height;
-                updateBeebotPosition();
+                
+                // --- FIX: Pass customBeeImageUrl check to disable initial rotation on resize ---
+                // We only want to disable rotation if it's a custom image AND the bot is stopped.
+                const disableRotation = !!customBeeImageUrl && !isExecuting;
+                updateBeebotPosition(beebotState, disableRotation); // <-- UPDATED
                 redrawFullPath();
             }
 
-            function updateBeebotPosition(pos = beebotState) {
+            // --- MODIFIED FUNCTION SIGNATURE AND LOGIC (Line 1726) ---
+            function updateBeebotPosition(pos = beebotState, isResetOrResize = false, isRotationCommand = false) {
                 if (!gridContainer.offsetWidth || !gridContainer.offsetHeight) return;
 
                 const cellWidth = gridContainer.offsetWidth / gridCols;
@@ -3466,9 +3497,33 @@ let lessonCache = [];
                 beebot.style.height = `${cellHeight}px`;
                 beebot.style.top = `${pos.row * cellHeight}px`;
                 beebot.style.left = `${pos.col * cellWidth}px`;
+                
+                let finalRotation = 0;
 
-                const visualRotation = (pos.dir * 90) - 90;
-                beebot.style.transform = `rotate(${visualRotation}deg)`;
+                if (!customBeeImageUrl) {
+                    // Scenario 1: Default Bee-Bot always rotates based on internal direction (pos.dir).
+                    // Default Bee-Bot faces East (dir=1) at 0 rotation, so (dir * 90) - 90 works.
+                    finalRotation = (pos.dir * 90) - 90;
+                    
+                } else {
+                    // Scenario 2: Custom Image (User's requirement)
+                    
+                    if (isResetOrResize) {
+                        // On initial load or stop/resize, the visual rotation must be 0 (flat image).
+                        finalRotation = 0;
+                        
+                    } else if (isRotationCommand) {
+                        // Only apply the visual rotation if the command was L or R.
+                        finalRotation = visualRotationAngle;
+
+                    } else {
+                        // For F (Forward) or B (Backward) commands: 
+                        // The position changes, but the visual orientation stays fixed at the last rotation angle.
+                        finalRotation = visualRotationAngle; 
+                    }
+                }
+
+                beebot.style.transform = `rotate(${finalRotation}deg)`; // <-- APPLIED FIX
             }
 
             function updateBeeBotInfo() {
@@ -3851,4 +3906,3 @@ let lessonCache = [];
     </script>
 </body>
 </html>
-
